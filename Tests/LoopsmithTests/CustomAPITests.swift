@@ -29,12 +29,12 @@ import Testing
         #expect(args.contains("Edit,Write,NotebookEdit"))
     }
 
-    @Test @MainActor func customAPIAgentsGetNoMCPServerUnlessTheEndpointSaysSo() throws {
-        let store = AppStore()
-        store.settings.endpoints = [ollama]
-        #expect(store.runsWithoutMCP(model: "api:ollama/x") && !store.runsWithoutMCP(model: "claude-opus-5-5"))
-        store.settings.endpoints[0].loadMCPServers = true
-        #expect(!store.runsWithoutMCP(model: "api:ollama/x"))
+    @Test func customAPIAgentsGetNoMCPServerUnlessTheEndpointSaysSo() throws {
+        var settings = Settings()
+        settings.endpoints = [ollama]
+        #expect(settings.runsWithoutMCP(model: "api:ollama/x") && !settings.runsWithoutMCP(model: "claude-opus-5-5"))
+        settings.endpoints[0].loadMCPServers = true
+        #expect(!settings.runsWithoutMCP(model: "api:ollama/x"))
         let args = Agent.arguments(model: "api:ollama/x", permissionMode: "auto", systemPrompt: "s", resume: nil, schema: nil,
                                    readOnly: false, disabledMCP: [], disabledSkills: [], withoutMCP: true)
         #expect(args.contains("--strict-mcp-config"))
@@ -63,13 +63,15 @@ import Testing
         #expect(keyed["ANTHROPIC_AUTH_TOKEN"] == "sk-123")
     }
 
-    @Test @MainActor func storeRefusesAModelOfAnUnknownEndpoint() throws {
-        let store = AppStore()
-        store.settings.endpoints = [ollama]
-        #expect(throws: AppError.self) { try store.agentEnvironment(model: "api:lmstudio/x") }
-        #expect(throws: AppError.self) { try store.agentEnvironment(model: "api:ollama") }
-        #expect(try store.agentEnvironment(model: "claude-opus-5-5").isEmpty)
-        #expect(try store.agentEnvironment(model: "api:ollama/qwen3-coder")["ANTHROPIC_MODEL"] == "qwen3-coder")
+    @Test func aModelOfAnUnknownEndpointIsRefused() throws {
+        var settings = Settings()
+        settings.endpoints = [ollama]
+        let key: (ModelEndpoint) -> String = { $0.name == "ollama" ? "k" : "" }
+        #expect(throws: AppError.self) { try settings.agentEnvironment(model: "api:lmstudio/x", key: key) }
+        #expect(throws: AppError.self) { try settings.agentEnvironment(model: "api:ollama", key: key) }
+        #expect(try settings.agentEnvironment(model: "claude-opus-5-5", key: key).isEmpty)
+        let env = try settings.agentEnvironment(model: "api:ollama/qwen3-coder", key: key)
+        #expect(env["ANTHROPIC_MODEL"] == "qwen3-coder" && env["ANTHROPIC_AUTH_TOKEN"] == "k")
     }
 
     @Test func permissionsOfACustomAPINeverUseAutoMode() {

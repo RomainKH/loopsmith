@@ -60,6 +60,26 @@ struct Settings: Codable, Equatable {
 
     func endpoint(named name: String) -> ModelEndpoint? { endpoints.first { $0.name == name } }
 
+    /// Custom API agents get no MCP server unless their endpoint says so.
+    func runsWithoutMCP(model: String) -> Bool {
+        guard let name = AgentProvider.endpointModel(model)?.endpoint else { return false }
+        return endpoint(named: name)?.loadMCPServers != true
+    }
+
+    /// The variables a run of `model` needs: a custom API's address, key and model; nothing for the other providers.
+    func agentEnvironment(model: String, key: (ModelEndpoint) -> String) throws -> [String: String] {
+        guard let (name, _) = AgentProvider.endpointModel(model) else {
+            if AgentProvider.detect(from: model) == .custom {
+                throw AppError("\(model) names no endpoint: write custom API models as api:<endpoint>/<model>.")
+            }
+            return [:]
+        }
+        guard let endpoint = endpoint(named: name) else {
+            throw AppError("No custom API called \(name): add it in Settings → Agents & AI (or `loopsmith endpoint add`).")
+        }
+        return try Agent.environment(model: model, endpoint: endpoint, key: key(endpoint))
+    }
+
     /// Missing keys keep their default, so a settings file from an older version still loads.
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -202,24 +222,10 @@ final class AppStore {
         }
     }
 
-    /// Custom API agents get no MCP server unless their endpoint says so.
-    func runsWithoutMCP(model: String) -> Bool {
-        guard let name = AgentProvider.endpointModel(model)?.endpoint else { return false }
-        return settings.endpoint(named: name)?.loadMCPServers != true
-    }
+    func runsWithoutMCP(model: String) -> Bool { settings.runsWithoutMCP(model: model) }
 
-    /// The variables a run of `model` needs: a custom API's address, key and model; nothing for the other providers.
     func agentEnvironment(model: String) throws -> [String: String] {
-        guard let (name, _) = AgentProvider.endpointModel(model) else {
-            if AgentProvider.detect(from: model) == .custom {
-                throw AppError("\(model) names no endpoint: write custom API models as api:<endpoint>/<model>.")
-            }
-            return [:]
-        }
-        guard let endpoint = settings.endpoint(named: name) else {
-            throw AppError("No custom API called \(name): add it in Settings → Agents & AI (or `loopsmith endpoint add`).")
-        }
-        return try Agent.environment(model: model, endpoint: endpoint, key: Keychain.get(endpoint.keychainAccount))
+        try settings.agentEnvironment(model: model) { Keychain.get($0.keychainAccount) }
     }
 
     func saveSettings() {
