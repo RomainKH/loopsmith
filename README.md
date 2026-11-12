@@ -18,7 +18,8 @@ prompt / Jira ticket
 after every step, the pipeline stops until you approve it
 ```
 
-It also shows your Jira worklog for the day, lets you log time on a ticket, and lists your open pull requests on GitHub.
+Everything is organised by project, a git repository on your Mac: its overview (what waits for you, what runs,
+open pull requests, today's time), its pull requests, its Jira worklog, and its features in progress or shipped.
 
 ## How it works
 
@@ -81,14 +82,17 @@ The app reads your login shell's `PATH`, so `claude`, `gh`, `node` or `npm` are 
 ## Try it locally
 
 1. Build and open the app: `./scripts/build-app.sh --install`, then open Loopsmith from Applications.
-2. Optional: Settings (⌘,) → Jira, to pick tickets and log work. To keep a first try cheap, set the
-   models to `claude-sonnet-5-5` or `claude-haiku-5-5` in Settings → Agents.
-3. **Add project** (⇧⌘N) and choose a git repository. An agent writes its brief; read it on the project page.
-4. **New feature** (⌘N): pick the project, a base branch, optionally a ticket, and describe the feature.
+2. The welcome steps ask for a project folder (a git repository), then connect your AI agents (the CLIs
+   installed, the model of each role; for a cheap first try pick `claude-sonnet-5-5` or `claude-haiku-5-5`),
+   Jira if you want it, and check GitHub. An agent writes the project's brief: read it in Overview.
+3. In Overview, set the project's Jira keys (`PROJ`) so its worklog and ticket list keep to its tickets.
+4. **New feature** (⌘N): a base branch, optionally a ticket, and what to build.
 5. Approve each step from the feature page. The worktree lives in `~/Loopsmith/<repo>/<feature>`: open it
    in your editor at any time.
 6. **Create PR** commits, pushes the branch and opens the pull request: try it on a repository where
-   pushing a test branch is fine.
+   pushing a test branch is fine. The project's Pull requests page lists it with your other ones.
+
+The menu next to the project name switches, adds or closes projects; Settings (⌘,) holds the agents, Jira and GitHub.
 
 ## Settings
 

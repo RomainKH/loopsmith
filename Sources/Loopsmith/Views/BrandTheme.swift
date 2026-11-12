@@ -1,31 +1,36 @@
 import AppKit
 import SwiftUI
 
-/// Loopsmith "Forge & Precision" Brand & Design System tokens.
+/// Loopsmith "Icy Steel & Cobalt" Brand & Design System tokens.
 enum Brand {
     static let tagline = "Autonomous AI feature forge: from prompt to verified Pull Request."
 
-    // MARK: Core Palette (Matte Carbon & Brushed Steel)
-    static let obsidian = Color(red: 0.070, green: 0.073, blue: 0.082)   // #121315
-    static let charcoal = Color(red: 0.110, green: 0.115, blue: 0.128)   // #1C1D21
-    static let slate    = Color(red: 0.145, green: 0.152, blue: 0.170)   // #25272B
-    static let steel    = Color(red: 0.850, green: 0.875, blue: 0.910)   // #D9DFE8
+    // MARK: Core Palette (Matte Carbon, Cool Slate & Icy Brushed Steel)
+    static let obsidian = Color(red: 0.063, green: 0.071, blue: 0.090)   // #101217 (Deep Midnight Carbon)
+    static let charcoal = Color(red: 0.098, green: 0.110, blue: 0.141)   // #191C24 (Cool Slate Charcoal)
+    static let slate    = Color(red: 0.141, green: 0.157, blue: 0.200)   // #242833 (Brushed Dark Titanium)
+    static let steel    = Color(red: 0.855, green: 0.886, blue: 0.937)   // #DAE2EF (Icy Brushed Steel)
+    static let titanium = Color(red: 0.612, green: 0.667, blue: 0.765)   // #9CAAC3 (Cool Metallic Silver)
     static let surface  = Color(nsColor: .controlBackgroundColor)
 
-    // Restrained Forge & Semantic Accents
-    static let amber    = Color(red: 0.925, green: 0.600, blue: 0.145)   // #EC9925 (Warm Forge Amber)
-    static let copper   = Color(red: 0.840, green: 0.420, blue: 0.160)   // #D66B29
-    static let claude   = Color(red: 0.855, green: 0.490, blue: 0.360)   // #DA7D5C (Claude Terracotta)
-    static let gemini   = Color(red: 0.380, green: 0.590, blue: 0.960)   // #6196F5 (Gemini Blue)
-    static let indigo   = Color(red: 0.540, green: 0.580, blue: 0.940)   // #8A94F0
-    static let emerald  = Color(red: 0.130, green: 0.720, blue: 0.510)   // #21B882
-    static let crimson  = Color(red: 0.910, green: 0.290, blue: 0.290)   // #E84A4A
+    // MARK: Accents (Linear / Arc style: Electric Cobalt, Indigo & Glacier Cyan — zero yellow)
+    static let cobalt   = Color(red: 0.345, green: 0.514, blue: 0.976)   // #5883F9 (Primary Electric Cobalt)
+    static let indigo   = Color(red: 0.518, green: 0.455, blue: 0.965)   // #8474F6 (Deep Ultraviolet Indigo)
+    static let cyan     = Color(red: 0.275, green: 0.690, blue: 0.925)   // #46B0EC (Glacier Cyan)
+    static let claude   = Color(red: 0.640, green: 0.540, blue: 0.950)   // #A38AF2 (Cool Violet for Claude)
+    static let gemini   = Color(red: 0.275, green: 0.690, blue: 0.925)   // #46B0EC (Glacier Cyan for Gemini)
+    static let emerald  = Color(red: 0.157, green: 0.745, blue: 0.565)   // #28BE90 (Cool Mint Emerald)
+    static let crimson  = Color(red: 0.925, green: 0.310, blue: 0.380)   // #EC4F61 (Cool Rose Crimson)
+
+    // Legacy aliases mapped to the Icy Steel & Cobalt palette (zero yellow)
+    static let amber    = cobalt
+    static let copper   = cyan
 
     static func providerColor(_ provider: AgentProvider) -> Color {
         switch provider {
         case .claude: claude
         case .gemini: gemini
-        case .antigravity: indigo
+        case .antigravity: cobalt
         }
     }
 
@@ -187,50 +192,6 @@ struct LoopsmithLogoMark: View {
     }
 }
 
-/// Top brand header displayed in the macOS sidebar.
-struct SidebarBrandHeader: View {
-    let settings: Settings
-
-    private var activeProviders: [AgentProvider] {
-        let models = [settings.analysisModel, settings.devModel, settings.reviewModel, settings.qaModel]
-        let detected = Set(models.map(AgentProvider.detect(from:)))
-        return AgentProvider.allCases.filter { detected.contains($0) }
-    }
-
-    var body: some View {
-        HStack(spacing: 10) {
-            LoopsmithLogoMark(size: 34)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Loopsmith")
-                    .font(.system(size: 14, weight: .bold))
-                HStack(spacing: 6) {
-                    ForEach(activeProviders) { provider in
-                        HStack(spacing: 3) {
-                            Image(systemName: provider.icon)
-                                .font(.system(size: 8.5, weight: .semibold))
-                            Text(provider.shortLabel)
-                                .font(.system(size: 10, weight: .medium, design: .monospaced))
-                        }
-                        .foregroundStyle(.secondary)
-                    }
-                }
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(.quaternary.opacity(0.35))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
-                )
-        )
-    }
-}
-
-/// Pill badge displaying the AI provider (Claude Code or Gemini CLI) and model name.
 struct ProviderBadge: View {
     let model: String
     var showModelName: Bool = true
@@ -271,9 +232,191 @@ struct PhaseBadge: View {
             Text(text)
                 .font(.system(size: 10.5, weight: .bold, design: .rounded))
         }
-        .padding(.horizontal, 7)
-        .padding(.vertical, 2.5)
-        .background(tint.opacity(0.14), in: Capsule())
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
+        .background(tint.opacity(0.15), in: Capsule())
+        .overlay(Capsule().strokeBorder(tint.opacity(0.28), lineWidth: 0.75))
         .foregroundStyle(tint)
+    }
+}
+
+/// Monospace metadata chip for git branches, Jira keys, or file paths.
+struct ForgeCodeChip: View {
+    let text: String
+    var icon: String? = nil
+    var tint: Color = .secondary
+
+    var body: some View {
+        HStack(spacing: 5) {
+            if let icon {
+                Image(systemName: icon)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(tint)
+            }
+            Text(text)
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3.5)
+        .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .strokeBorder(.primary.opacity(0.08), lineWidth: 0.75)
+        )
+        .foregroundStyle(.primary.opacity(0.85))
+    }
+}
+
+/// Atmospheric background canvas for the "Icy Steel & Cobalt" Art Direction.
+struct ForgeCanvasBackground: View {
+    var accent: Color = Brand.cobalt
+
+    var body: some View {
+        ZStack {
+            Color(nsColor: .windowBackgroundColor)
+            Brand.obsidian.opacity(0.18)
+            RadialGradient(
+                colors: [accent.opacity(0.08), Brand.indigo.opacity(0.035), .clear],
+                center: .topLeading,
+                startRadius: 20,
+                endRadius: 640
+            )
+            RadialGradient(
+                colors: [Brand.steel.opacity(0.05), Brand.cyan.opacity(0.02), .clear],
+                center: .topTrailing,
+                startRadius: 40,
+                endRadius: 540
+            )
+        }
+        .ignoresSafeArea()
+    }
+}
+
+/// Elevated architectural surface card with cool titanium sheen and specular 1px border.
+struct ForgeCard<Content: View>: View {
+    var padding: CGFloat = 16
+    var cornerRadius: CGFloat = 12
+    var tint: Color? = nil
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        content()
+            .padding(padding)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background {
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .fill(.background.secondary)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                            .fill(Brand.slate.opacity(0.22))
+                    }
+                    .overlay {
+                        if let tint {
+                            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                                .fill(
+                                    LinearGradient(
+                                        colors: [tint.opacity(0.10), tint.opacity(0.025), .clear],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    )
+                                )
+                        } else {
+                            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                                .fill(
+                                    LinearGradient(
+                                        colors: [Brand.steel.opacity(0.045), .clear],
+                                        startPoint: .top,
+                                        endPoint: .bottom
+                                    )
+                                )
+                        }
+                    }
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .strokeBorder(
+                        LinearGradient(
+                            colors: [
+                                (tint ?? Brand.steel).opacity(tint != nil ? 0.42 : 0.16),
+                                (tint ?? Brand.titanium).opacity(tint != nil ? 0.15 : 0.06)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 1
+                    )
+            }
+            .shadow(color: .black.opacity(0.10), radius: 10, y: 3)
+    }
+}
+
+/// Dark obsidian console box for streaming CLI logs, diffs, and terminal output.
+struct ForgeTerminalBox<Content: View>: View {
+    var title: String = "CONSOLE OUTPUT"
+    var trailingText: String? = nil
+    var statusColor: Color = Brand.amber
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 6) {
+                Circle().fill(statusColor.opacity(0.85)).frame(width: 7, height: 7)
+                Text(title.uppercased())
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .foregroundStyle(Brand.steel.opacity(0.7))
+                Spacer()
+                if let trailingText {
+                    Text(trailingText)
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .foregroundStyle(Brand.steel.opacity(0.5))
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(Brand.charcoal)
+
+            Divider().overlay(.white.opacity(0.07))
+
+            content()
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Brand.obsidian)
+                .foregroundStyle(Brand.steel)
+                .environment(\.colorScheme, .dark)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .strokeBorder(.white.opacity(0.10), lineWidth: 1)
+        )
+    }
+}
+
+/// Section header with eyebrow label and icon.
+struct ForgeSectionHeader: View {
+    let title: String
+    var subtitle: String? = nil
+    var icon: String? = nil
+    var tint: Color = Brand.amber
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 7) {
+                if let icon {
+                    Image(systemName: icon)
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(tint)
+                }
+                Text(title)
+                    .font(.headline)
+            }
+            if let subtitle {
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
     }
 }

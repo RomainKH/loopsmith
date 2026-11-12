@@ -23,6 +23,10 @@ struct Settings: Codable, Equatable {
     var jiraEmail = ""
     var issueJQL = "assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC"
     var dailyHours = 8.0
+    /// The welcome steps (project, AI agents, Jira, GitHub) were gone through once.
+    var onboarded = false
+    /// The project open when the app last quit.
+    var lastProjectID: UUID?
 
     init() {}
 
@@ -48,6 +52,8 @@ struct Settings: Codable, Equatable {
         jiraEmail = try c.decodeIfPresent(String.self, forKey: .jiraEmail) ?? d.jiraEmail
         issueJQL = try c.decodeIfPresent(String.self, forKey: .issueJQL) ?? d.issueJQL
         dailyHours = try c.decodeIfPresent(Double.self, forKey: .dailyHours) ?? d.dailyHours
+        onboarded = try c.decodeIfPresent(Bool.self, forKey: .onboarded) ?? d.onboarded
+        lastProjectID = try c.decodeIfPresent(UUID.self, forKey: .lastProjectID)
     }
 }
 
@@ -55,6 +61,8 @@ struct Settings: Codable, Equatable {
 final class AppStore {
     var features: [Feature] = []
     var projects: [Project] = []
+    /// The project the window shows; nil shows the welcome steps.
+    var openProjectID: UUID?
     var settings: Settings
     var jiraToken: String
     var issues: [JiraIssue] = []
@@ -85,6 +93,7 @@ final class AppStore {
             projects[i].scanError = "Interrupted when the app quit."
         }
         features = Self.load(featuresFile) ?? []
+        openProjectID = projects.first { $0.id == settings.lastProjectID }?.id
         // The app quit while agents ran: they are gone, the feature can be continued.
         for i in features.indices where features[i].running {
             features[i].running = false
@@ -170,10 +179,21 @@ final class AppStore {
         return project.id
     }
 
-    /// Features stay, listed under "Other projects".
+    var openProject: Project? { openProjectID.flatMap(project) }
+
+    func features(of project: Project) -> [Feature] { features.filter { $0.repoPath == project.path } }
+
+    func openProject(_ id: UUID?) {
+        openProjectID = id
+        settings.lastProjectID = id
+        saveSettings()
+    }
+
+    /// The features stay saved: they show again if the same folder is added back.
     func removeProject(_ id: UUID) {
         stop(id)
         projects.removeAll { $0.id == id }
+        if openProjectID == id { openProject(nil) }
         save()
     }
 

@@ -16,7 +16,7 @@ struct LoopsmithApp: App {
         WindowGroup("Loopsmith") {
             ContentView()
                 .environment(store)
-                .tint(Brand.amber)
+                .tint(Brand.cobalt)
                 .frame(minWidth: 1020, minHeight: 660)
                 .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
                     store.stopAll()
@@ -25,7 +25,7 @@ struct LoopsmithApp: App {
         SwiftUI.Settings {
             SettingsView()
                 .environment(store)
-                .tint(Brand.amber)
+                .tint(Brand.cobalt)
         }
     }
 }

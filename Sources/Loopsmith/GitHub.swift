@@ -1,12 +1,14 @@
 import Foundation
 
 struct PullRequest: Identifiable, Decodable {
-    struct Repository: Decodable { let nameWithOwner: String }
     let number: Int
     let title: String
     let url: String
     let isDraft: Bool
-    let repository: Repository
+    /// OPEN, MERGED or CLOSED.
+    let state: String
+    let headRefName: String
+    let updatedAt: Date
     var id: String { url }
 }
 
@@ -25,10 +27,17 @@ enum GitHub {
         return (r.out + r.err).trimmed.nonEmpty ?? "gh not found: install it with `brew install gh`"
     }
 
-    static func myOpenPullRequests() async throws -> [PullRequest] {
-        let out = try await Shell.check(["gh", "search", "prs", "--author=@me", "--state=open",
-                                         "--json", "number,title,url,isDraft,repository", "--limit", "50"])
-        return try JSONDecoder().decode([PullRequest].self, from: Data(out.utf8))
+    /// The user's pull requests on the repository of `repo` (its GitHub remote), every state, newest first.
+    static func myPullRequests(repo: String) async throws -> [PullRequest] {
+        let out = try await Shell.check(["gh", "pr", "list", "--author", "@me", "--state", "all", "--limit", "50",
+                                         "--json", "number,title,url,isDraft,state,headRefName,updatedAt"], cwd: repo)
+        return try decodePullRequests(Data(out.utf8))
+    }
+
+    static func decodePullRequests(_ data: Data) throws -> [PullRequest] {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try decoder.decode([PullRequest].self, from: data)
     }
 
     /// Opens the pull request and returns its URL.

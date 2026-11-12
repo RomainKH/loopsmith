@@ -77,6 +77,15 @@ struct Jira {
         return base.appendingPathComponent("browse").appendingPathComponent(cleanKey)
     }
 
+    /// What is missing or wrong before any call, in words for the Settings page; nil when the call can be tried.
+    var missingSetting: String? {
+        if site.trimmed.isEmpty { return "Enter your Jira site, for example yourteam.atlassian.net." }
+        if validatedBaseURL == nil { return "The site must be an https address such as yourteam.atlassian.net, without a path." }
+        if email.trimmed.isEmpty { return "Enter the email of your Atlassian account." }
+        if token.isEmpty { return "Paste your API token." }
+        return nil
+    }
+
     private func call(_ path: String, method: String = "GET", body: [String: Any]? = nil) async throws -> Any {
         guard let base = validatedBaseURL, let url = URL(string: base.absoluteString + path), url.scheme == "https" else {
             throw AppError("Invalid or insecure Jira site (HTTPS required): \(site)")
@@ -93,6 +102,7 @@ struct Jira {
         let (data, response) = try await URLSession.shared.data(for: req)
         let code = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(code) else {
+            if code == 401 { throw AppError("Jira refused the email or the API token (401): the token must belong to \(email.trimmed).") }
             throw AppError("Jira answered \(code): \(String(decoding: data.prefix(300), as: UTF8.self))")
         }
         return data.isEmpty ? [String: Any]() : try JSONSerialization.jsonObject(with: data)

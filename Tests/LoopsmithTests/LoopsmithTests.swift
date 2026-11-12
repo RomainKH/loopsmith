@@ -325,3 +325,56 @@ import Testing
         #expect(Shell.environment["GIT_TERMINAL_PROMPT"] == "0")
     }
 }
+
+@Suite struct JiraSettingsTests {
+    /// The Settings page said nothing useful when the site was left empty (2026-11-12): the test now names what is missing.
+    @Test func missingSettingNamesTheFirstGap() {
+        #expect(Jira(site: "", email: "a@b.c", token: "t").missingSetting?.contains("Jira site") == true)
+        #expect(Jira(site: "http://team.atlassian.net", email: "a@b.c", token: "t").missingSetting?.contains("https") == true)
+        #expect(Jira(site: "team.atlassian.net", email: " ", token: "t").missingSetting?.contains("email") == true)
+        #expect(Jira(site: "team.atlassian.net", email: "a@b.c", token: "").missingSetting?.contains("token") == true)
+        #expect(Jira(site: "team.atlassian.net", email: "a@b.c", token: "t").missingSetting == nil)
+        #expect(Jira(site: "https://team.atlassian.net/", email: "a@b.c", token: "t").missingSetting == nil)
+    }
+}
+
+@Suite struct ProjectOrganisationTests {
+    func project(keys: String?) -> Project {
+        var p = Project(path: "/r/app", name: "app", baseBranch: "main")
+        p.jiraKeys = keys
+        return p
+    }
+
+    @Test func ticketsBelongToTheProjectKeys() {
+        let p = project(keys: "app, WEB")
+        #expect(p.jiraKeyList == ["APP", "WEB"])
+        #expect(p.owns(issueKey: "APP-160") && p.owns(issueKey: "web-3"))
+        #expect(!p.owns(issueKey: "APPS-1") && !p.owns(issueKey: "CORE-9"))
+        #expect(project(keys: nil).owns(issueKey: "ANY-1") && project(keys: " ").owns(issueKey: "ANY-1"))
+    }
+
+    @Test func projectsSavedBeforeTheKeysStillLoad() throws {
+        var old = try JSONSerialization.jsonObject(with: JSONEncoder().encode([project(keys: "X")])) as! [[String: Any]]
+        old[0].removeValue(forKey: "jiraKeys")
+        let loaded = try JSONDecoder().decode([Project].self, from: JSONSerialization.data(withJSONObject: old))
+        #expect(loaded[0].jiraKeys == nil && loaded[0].jiraKeyList.isEmpty)
+    }
+
+    @Test func welcomeStepsShowUntilDoneOnce() throws {
+        let fresh = try JSONDecoder().decode(Settings.self, from: Data(#"{"devModel":"claude-opus-5-5"}"#.utf8))
+        #expect(!fresh.onboarded && fresh.lastProjectID == nil)
+        var s = Settings()
+        s.onboarded = true
+        s.lastProjectID = UUID()
+        let back = try JSONDecoder().decode(Settings.self, from: JSONEncoder().encode(s))
+        #expect(back.onboarded && back.lastProjectID == s.lastProjectID)
+    }
+
+    /// Shape of `gh pr list --json number,title,url,isDraft,state,headRefName,updatedAt` (gh 2.98, 2026-11-12).
+    @Test func pullRequestsDecodeFromGh() throws {
+        let json = #"[{"headRefName":"feat/single-product-free-shipping-bar","isDraft":false,"number":405,"state":"OPEN","title":"feat(blocks): free shipping bar","updatedAt":"2026-11-12T11:31:37Z","url":"https://github.com/o/r/pull/405"},{"headRefName":"main","isDraft":true,"number":403,"state":"MERGED","title":"Deploy","updatedAt":"2026-11-10T09:00:00Z","url":"https://github.com/o/r/pull/403"}]"#
+        let prs = try GitHub.decodePullRequests(Data(json.utf8))
+        #expect(prs.map(\.state) == ["OPEN", "MERGED"] && prs[0].number == 405 && prs[1].isDraft)
+        #expect(prs[0].updatedAt == ISO8601DateFormatter().date(from: "2026-11-12T11:31:37Z"))
+    }
+}

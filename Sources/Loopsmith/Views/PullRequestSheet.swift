@@ -12,25 +12,62 @@ struct PullRequestSheet: View {
     @State private var error: String?
 
     var body: some View {
-        Form {
-            LabeledContent("Branch", value: "\(feature.branch) → \(feature.baseBranch)")
-            TextField("Title", text: $title)
-            Toggle("Draft", isOn: $draft)
-            Section("Description") {
-                TextEditor(text: $description).font(.body.monospaced()).frame(minHeight: 260)
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Brand.emerald.opacity(0.16))
+                        .frame(width: 34, height: 34)
+                    Image(systemName: "arrow.triangle.pull")
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(Brand.emerald)
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Open Pull Request")
+                        .font(.headline)
+                    HStack(spacing: 6) {
+                        ForgeCodeChip(text: feature.branch, icon: "arrow.triangle.branch", tint: Brand.amber)
+                        Image(systemName: "arrow.right")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(.tertiary)
+                        ForgeCodeChip(text: feature.baseBranch, tint: Brand.emerald)
+                    }
+                }
+                Spacer()
             }
-            if !feature.unresolved.isEmpty {
-                Text("\(feature.unresolved.count) open point(s) left by the pipeline are listed in the description.")
-                    .foregroundStyle(.orange)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 14)
+            .background(.background.secondary)
+
+            Divider()
+
+            Form {
+                TextField("Title", text: $title)
+                Toggle("Create as Draft PR", isOn: $draft)
+                Section("Description (Markdown)") {
+                    TextEditor(text: $description)
+                        .font(.system(size: 12, design: .monospaced))
+                        .frame(minHeight: 260)
+                }
+                if !feature.unresolved.isEmpty {
+                    Label("\(feature.unresolved.count) open point(s) left by the pipeline are listed in the description.",
+                          systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(Brand.amber)
+                }
+                if let error {
+                    Label(error, systemImage: "xmark.octagon.fill")
+                        .foregroundStyle(Brand.crimson)
+                        .textSelection(.enabled)
+                }
             }
-            if let error { Text(error).foregroundStyle(.red).textSelection(.enabled) }
+            .formStyle(.grouped)
         }
-        .formStyle(.grouped)
-        .frame(width: 640, height: 580)
+        .frame(width: 660, height: 610)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
             ToolbarItem(placement: .confirmationAction) {
                 Button(busy ? "Pushing…" : "Commit, push and open PR", action: submit)
+                    .buttonStyle(.borderedProminent)
                     .disabled(busy || title.trimmed.isEmpty)
             }
         }

@@ -13,28 +13,83 @@ struct FeatureView: View {
 
     var body: some View {
         if let f = store.feature(id) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    header(f)
-                    PhaseStrip(feature: f)
-                    if let message = f.error ?? actionError {
-                        Label(message, systemImage: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.orange).textSelection(.enabled)
+            ZStack {
+                ForgeCanvasBackground(accent: f.phase == .ready || f.phase == .prOpened ? Brand.emerald : Brand.amber)
+
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 18) {
+                        header(f)
+                        PhaseStrip(feature: f)
+
+                        if let message = f.error ?? actionError {
+                            ForgeCard(padding: 14, cornerRadius: 11, tint: Brand.crimson) {
+                                HStack(spacing: 10) {
+                                    Image(systemName: "exclamationmark.triangle.fill")
+                                        .foregroundStyle(Brand.crimson)
+                                    Text(message)
+                                        .font(.callout)
+                                        .foregroundStyle(Brand.crimson)
+                                        .textSelection(.enabled)
+                                }
+                            }
+                        }
+
+                        if !f.running && (f.isAwaiting || f.phase == .ready) {
+                            GatePanel(feature: f, showDiff: { showDiff = true }, createPullRequest: { showPullRequest = true })
+                        }
+
+                        if let url = f.prURL.flatMap(GitHub.safeHTTPSURL) {
+                            ForgeCard(padding: 14, cornerRadius: 11, tint: Brand.emerald) {
+                                HStack {
+                                    Image(systemName: "arrow.triangle.pull")
+                                        .foregroundStyle(Brand.emerald)
+                                    Text("Pull Request opened:")
+                                        .font(.callout.weight(.semibold))
+                                    Link(url.absoluteString, destination: url)
+                                        .font(.callout.monospaced())
+                                    Spacer()
+                                }
+                            }
+                        }
+
+                        if !f.unresolved.isEmpty {
+                            ForgeCard(padding: 16, cornerRadius: 12, tint: Brand.amber) {
+                                VStack(alignment: .leading, spacing: 10) {
+                                    ForgeSectionHeader(
+                                        title: "Open points (fix rounds used up)",
+                                        subtitle: "Listed automatically in the Pull Request description.",
+                                        icon: "exclamationmark.bubble.fill",
+                                        tint: Brand.amber
+                                    )
+                                    FindingsList(findings: f.unresolved)
+                                }
+                            }
+                        }
+
+                        if let analysis = f.analysis {
+                            AnalysisView(analysis: analysis)
+                        }
+
+                        if !f.runs.isEmpty {
+                            VStack(alignment: .leading, spacing: 12) {
+                                ForgeSectionHeader(
+                                    title: "Agent Runs (\(f.runs.count))",
+                                    subtitle: "Execution logs, lens reviews, and QA verification.",
+                                    icon: "terminal.fill",
+                                    tint: Brand.indigo
+                                )
+                                .padding(.horizontal, 4)
+
+                                ForEach(f.runs.reversed()) {
+                                    RunView(run: $0)
+                                }
+                            }
+                        }
                     }
-                    if !f.running && (f.isAwaiting || f.phase == .ready) {
-                        GatePanel(feature: f, showDiff: { showDiff = true }, createPullRequest: { showPullRequest = true })
-                    }
-                    if let url = f.prURL.flatMap(GitHub.safeHTTPSURL) {
-                        Link(destination: url) { Label(url.absoluteString, systemImage: "arrow.triangle.pull") }
-                    }
-                    if !f.unresolved.isEmpty {
-                        GroupBox("Open points (fix rounds used up)") { FindingsList(findings: f.unresolved) }
-                    }
-                    if let analysis = f.analysis { AnalysisView(analysis: analysis) }
-                    ForEach(f.runs.reversed()) { RunView(run: $0) }
+                    .padding(24)
+                    .frame(maxWidth: 1020, alignment: .leading)
+                    .frame(maxWidth: .infinity)
                 }
-                .padding(20)
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
             .navigationTitle(f.title)
             .toolbar { toolbar(f) }
@@ -58,16 +113,90 @@ struct FeatureView: View {
     }
 
     private func header(_ f: Feature) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                if let key = f.jiraKey, let url = store.jira.browseURL(key) {
-                    Link(key, destination: url).font(.headline)
+        ForgeCard(padding: 18, cornerRadius: 14) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .center, spacing: 10) {
+                    if let key = f.jiraKey {
+                        if let url = store.jira.browseURL(key) {
+                            Link(destination: url) {
+                                PhaseBadge(text: key, tint: Brand.amber, icon: "arrow.up.right.square")
+                            }
+                            .buttonStyle(.plain)
+                        } else {
+                            PhaseBadge(text: key, tint: Brand.amber, icon: "tag.fill")
+                        }
+                    }
+
+                    Text(f.title)
+                        .font(.system(size: 22, weight: .bold, design: .rounded))
+
+                    Spacer()
+
+                    PhaseBadge(
+                        text: f.isAwaiting ? "AWAITING APPROVAL" : f.phase.label.uppercased(),
+                        tint: f.error != nil ? Brand.crimson : f.isAwaiting ? Brand.amber : (f.phase == .ready || f.phase == .prOpened) ? Brand.emerald : Brand.indigo,
+                        icon: f.running ? "bolt.fill" : f.isAwaiting ? "hand.raised.fill" : "circle.fill"
+                    )
                 }
-                Text(f.branch).font(.callout.monospaced()).foregroundStyle(.secondary)
-                Text("from \(f.baseBranch)").font(.callout).foregroundStyle(.secondary)
+
+                HStack(spacing: 8) {
+                    ForgeCodeChip(text: f.branch, icon: "arrow.triangle.branch", tint: Brand.amber)
+                    Image(systemName: "arrow.left")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.tertiary)
+                    ForgeCodeChip(text: f.baseBranch, icon: "point.topleft.down.curvedto.point.bottomright.up", tint: .secondary)
+
+                    Spacer()
+
+                    Button { showDiff = true } label: {
+                        Label("Diff", systemImage: "doc.text.magnifyingglass")
+                            .font(.caption.weight(.medium))
+                    }
+                    .controlSize(.small)
+
+                    Button { open(f.worktreePath, with: "com.microsoft.VSCode") } label: {
+                        Label("VS Code", systemImage: "chevron.left.forwardslash.chevron.right")
+                            .font(.caption.weight(.medium))
+                    }
+                    .controlSize(.small)
+
+                    Button { open(f.worktreePath, with: "com.apple.Terminal") } label: {
+                        Label("Terminal", systemImage: "terminal")
+                            .font(.caption.weight(.medium))
+                    }
+                    .controlSize(.small)
+                }
+
+                if !f.prompt.trimmed.isEmpty {
+                    Text(f.prompt)
+                        .font(.callout)
+                        .foregroundStyle(.primary.opacity(0.86))
+                        .textSelection(.enabled)
+                        .lineLimit(6)
+                        .padding(12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .fill(.quaternary.opacity(0.35))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .strokeBorder(.primary.opacity(0.07), lineWidth: 1)
+                        )
+                }
+
+                HStack(spacing: 6) {
+                    Image(systemName: "folder")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                    Text(f.worktreePath)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.tertiary)
+                        .textSelection(.enabled)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
             }
-            Text(f.prompt).textSelection(.enabled).foregroundStyle(.secondary).lineLimit(6)
-            Text(f.worktreePath).font(.caption.monospaced()).foregroundStyle(.tertiary).textSelection(.enabled)
         }
     }
 
@@ -118,29 +247,57 @@ struct PhaseStrip: View {
     let feature: Feature
 
     var body: some View {
-        let steps = [("Analysis", feature.analysis.map { $0.feasibility.capitalized } ?? ""),
-                     ("Dev", ""),
-                     ("Review", feature.reviewFixes > 0 ? "\(feature.reviewFixes) fix round(s)" : ""),
-                     ("QA", feature.qaFixes > 0 ? "\(feature.qaFixes) fix round(s)" : ""),
-                     ("PR", "")]
-        HStack(spacing: 0) {
-            ForEach(steps.indices, id: \.self) { i in
-                let done = i < feature.phase.step
-                let current = i == feature.phase.step
-                VStack(spacing: 4) {
-                    Image(systemName: done ? "checkmark.circle.fill" : current ? "circle.inset.filled" : "circle")
-                        .font(.title2)
-                        .foregroundStyle(done ? Color.green : current ? Color.accentColor : Color.secondary)
-                    Text(steps[i].0).font(.callout.weight(current ? .semibold : .regular))
-                    Text(current ? feature.phase.label : steps[i].1).font(.caption).foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity)
-                if i < steps.count - 1 {
-                    Rectangle().fill(done ? Color.green : Color.secondary.opacity(0.3)).frame(height: 2).frame(maxWidth: 60)
+        let steps: [(title: String, icon: String, sub: String)] = [
+            ("Analysis", "magnifyingglass", feature.analysis.map { $0.feasibility.capitalized } ?? "Spec & risks"),
+            ("Dev", "hammer.fill", "Implementation"),
+            ("Review", "eye.fill", feature.reviewFixes > 0 ? "\(feature.reviewFixes) fix round(s)" : "3 lenses"),
+            ("QA", "checkmark.shield.fill", feature.qaFixes > 0 ? "\(feature.qaFixes) fix round(s)" : "Build & tests"),
+            ("Pull Request", "arrow.triangle.pull", feature.phase == .prOpened ? "Opened" : "Ship")
+        ]
+
+        ForgeCard(padding: 16, cornerRadius: 13) {
+            HStack(spacing: 0) {
+                ForEach(steps.indices, id: \.self) { i in
+                    let done = i < feature.phase.step
+                    let current = i == feature.phase.step
+                    let stepTint: Color = done ? Brand.emerald : current ? Brand.amber : .secondary
+
+                    VStack(spacing: 6) {
+                        ZStack {
+                            Circle()
+                                .fill(done ? Brand.emerald.opacity(0.18) : current ? Brand.amber.opacity(0.20) : Color.secondary.opacity(0.10))
+                                .frame(width: 34, height: 34)
+                            if current {
+                                Circle()
+                                    .strokeBorder(Brand.amber.opacity(0.55), lineWidth: 1.5)
+                                    .frame(width: 34, height: 34)
+                            }
+                            Image(systemName: done ? "checkmark" : steps[i].icon)
+                                .font(.system(size: 13, weight: .bold))
+                                .foregroundStyle(stepTint)
+                        }
+
+                        Text(steps[i].title)
+                            .font(.system(size: 12.5, weight: current ? .bold : .semibold))
+                            .foregroundStyle(current || done ? .primary : .secondary)
+
+                        Text(current ? feature.phase.label : steps[i].sub)
+                            .font(.system(size: 10.5, weight: .medium))
+                            .foregroundStyle(current ? Brand.amber : .secondary)
+                            .lineLimit(1)
+                    }
+                    .frame(maxWidth: .infinity)
+
+                    if i < steps.count - 1 {
+                        Capsule()
+                            .fill(done ? Brand.emerald.opacity(0.65) : Color.primary.opacity(0.10))
+                            .frame(height: 2.5)
+                            .frame(maxWidth: 64)
+                            .padding(.bottom, 22)
+                    }
                 }
             }
         }
-        .padding(.vertical, 8)
     }
 }
 
@@ -154,38 +311,75 @@ struct RunView: View {
     }
 
     var body: some View {
-        GroupBox {
+        ForgeCard(padding: 14, cornerRadius: 12, tint: run.status == .running ? Brand.indigo : nil) {
             DisclosureGroup(isExpanded: $expanded) {
-                VStack(alignment: .leading, spacing: 10) {
-                    if let error = run.error { Text(error).foregroundStyle(.red).textSelection(.enabled) }
+                VStack(alignment: .leading, spacing: 12) {
+                    Divider().opacity(0.5)
+
+                    if let error = run.error {
+                        Label(error, systemImage: "xmark.octagon.fill")
+                            .foregroundStyle(Brand.crimson)
+                            .textSelection(.enabled)
+                    }
                     if let summary = run.summary, run.role == .dev || run.findings != nil {
                         Text((try? AttributedString(markdown: summary, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(summary))
+                            .font(.callout)
                             .textSelection(.enabled)
+                            .padding(10)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                     }
                     if let findings = run.findings {
-                        if findings.isEmpty { Text("No finding.").foregroundStyle(.secondary) } else { FindingsList(findings: findings) }
+                        if findings.isEmpty {
+                            Label("No blocking or major finding reported.", systemImage: "checkmark.seal.fill")
+                                .font(.callout)
+                                .foregroundStyle(Brand.emerald)
+                        } else {
+                            FindingsList(findings: findings)
+                        }
                     }
-                    ScrollView {
-                        Text(run.log.suffix(400).joined(separator: "\n"))
-                            .font(.caption.monospaced())
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                    ForgeTerminalBox(
+                        title: "\(run.provider.label) · \(AgentProvider.cliModel(run.model))",
+                        trailingText: "\(run.log.count) lines",
+                        statusColor: color
+                    ) {
+                        ScrollView {
+                            Text(run.log.suffix(400).joined(separator: "\n"))
+                                .font(.system(size: 11.5, design: .monospaced))
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .defaultScrollAnchor(.bottom)
+                        .frame(height: 220)
                     }
-                    .defaultScrollAnchor(.bottom)
-                    .frame(height: 220)
-                    .padding(6)
-                    .background(.background.secondary, in: RoundedRectangle(cornerRadius: 6))
                 }
-                .padding(.top, 6)
+                .padding(.top, 8)
             } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: icon).foregroundStyle(color)
-                    Text(title).font(.headline)
+                HStack(spacing: 10) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .fill(color.opacity(0.16))
+                            .frame(width: 28, height: 28)
+                        Image(systemName: icon)
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(color)
+                    }
+
+                    Text(title)
+                        .font(.headline)
+
                     ProviderBadge(model: run.model, compact: true)
+
                     Spacer()
-                    if run.status == .running { ProgressView().controlSize(.small) }
-                    if let cost = run.cost { Text(String(format: "$%.2f", cost)).font(.caption).foregroundStyle(.secondary) }
-                    Text(duration).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+
+                    if run.status == .running {
+                        ProgressView().controlSize(.small)
+                    }
+                    if let cost = run.cost {
+                        ForgeCodeChip(text: String(format: "$%.2f", cost), tint: .secondary)
+                    }
+                    ForgeCodeChip(text: duration, icon: "clock", tint: .secondary)
                 }
             }
         }
@@ -202,7 +396,7 @@ struct RunView: View {
 
     private var icon: String {
         switch run.status {
-        case .running: "circle.dotted"
+        case .running: "bolt.horizontal.circle.fill"
         case .done: (run.findings?.contains(where: \.isBlocking) ?? false) ? "exclamationmark.circle.fill" : "checkmark.circle.fill"
         case .failed: "xmark.octagon.fill"
         case .stopped: "stop.circle.fill"
@@ -211,9 +405,9 @@ struct RunView: View {
 
     private var color: Color {
         switch run.status {
-        case .running: .accentColor
-        case .done: (run.findings?.contains(where: \.isBlocking) ?? false) ? .orange : .green
-        case .failed: .red
+        case .running: Brand.indigo
+        case .done: (run.findings?.contains(where: \.isBlocking) ?? false) ? Brand.amber : Brand.emerald
+        case .failed: Brand.crimson
         case .stopped: .secondary
         }
     }
@@ -229,26 +423,40 @@ struct AnalysisView: View {
     @State private var expanded = true
 
     var body: some View {
-        GroupBox {
+        ForgeCard(padding: 16, cornerRadius: 13) {
             DisclosureGroup(isExpanded: $expanded) {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text(analysis.summary).textSelection(.enabled)
-                    section("Approach", [analysis.approach])
-                    section("Files and modules", analysis.impacted)
-                    section("Problems to handle", analysis.risks)
-                    section("Assumptions", analysis.assumptions)
-                    section("Acceptance criteria", analysis.acceptanceCriteria)
+                VStack(alignment: .leading, spacing: 12) {
+                    Divider().opacity(0.5)
+
+                    Text(analysis.summary)
+                        .font(.callout)
+                        .textSelection(.enabled)
+                        .padding(12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(.quaternary.opacity(0.32), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+                    section("Approach", icon: "compass.drawing", [analysis.approach])
+                    section("Files and modules", icon: "doc.on.doc", analysis.impacted)
+                    section("Problems to handle", icon: "exclamationmark.shield", analysis.risks)
+                    section("Assumptions", icon: "questionmark.circle", analysis.assumptions)
+                    section("Acceptance criteria", icon: "checkmark.seal", analysis.acceptanceCriteria)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.top, 6)
+                .padding(.top, 8)
             } label: {
-                HStack {
-                    Text("Analysis").font(.headline)
-                    Text(analysis.feasibility.uppercased())
-                        .font(.caption2.weight(.bold))
-                        .padding(.horizontal, 5).padding(.vertical, 1)
-                        .background(tint.opacity(0.2), in: Capsule())
-                        .foregroundStyle(tint)
+                HStack(spacing: 10) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .fill(tint.opacity(0.16))
+                            .frame(width: 28, height: 28)
+                        Image(systemName: "magnifyingglass")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(tint)
+                    }
+                    Text("Architecture & Feasibility Analysis")
+                        .font(.headline)
+                    PhaseBadge(text: analysis.feasibility.uppercased(), tint: tint)
+                    Spacer()
                 }
             }
         }
@@ -256,21 +464,30 @@ struct AnalysisView: View {
 
     private var tint: Color {
         switch analysis.feasibility {
-        case "feasible": .green
-        case "risky": .orange
-        default: .red
+        case "feasible": Brand.emerald
+        case "risky": Brand.amber
+        default: Brand.crimson
         }
     }
 
     @ViewBuilder
-    private func section(_ title: String, _ items: [String]) -> some View {
+    private func section(_ title: String, icon: String, _ items: [String]) -> some View {
         if !items.isEmpty {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title).font(.callout.weight(.semibold))
+            VStack(alignment: .leading, spacing: 5) {
+                Label(title, systemImage: icon)
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(.primary.opacity(0.9))
                 ForEach(Array(items.enumerated()), id: \.offset) { _, item in
-                    Text(items.count > 1 ? "• \(item)" : item).font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
+                    Text(items.count > 1 ? "• \(item)" : item)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .padding(.leading, 4)
                 }
             }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.quaternary.opacity(0.22), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
     }
 }
@@ -281,20 +498,27 @@ struct FindingsList: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             ForEach(Array(findings.enumerated()), id: \.offset) { _, finding in
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
-                        Text(finding.severity.uppercased())
-                            .font(.caption2.weight(.bold))
-                            .padding(.horizontal, 5).padding(.vertical, 1)
-                            .background(tint(finding).opacity(0.2), in: Capsule())
-                            .foregroundStyle(tint(finding))
-                        Text(finding.title).font(.callout.weight(.medium))
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 7) {
+                        PhaseBadge(text: finding.severity.uppercased(), tint: tint(finding))
+                        Text(finding.title)
+                            .font(.callout.weight(.semibold))
                         if !finding.location.isEmpty {
-                            Text(finding.location).font(.caption.monospaced()).foregroundStyle(.secondary)
+                            ForgeCodeChip(text: finding.location, icon: "mappin.and.ellipse", tint: .secondary)
                         }
                     }
-                    Text(finding.detail).font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
+                    Text(finding.detail)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
                 }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.quaternary.opacity(0.28), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(tint(finding).opacity(0.22), lineWidth: 1)
+                )
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -302,8 +526,8 @@ struct FindingsList: View {
 
     private func tint(_ finding: Finding) -> Color {
         switch finding.severity {
-        case "blocker": .red
-        case "major": .orange
+        case "blocker": Brand.crimson
+        case "major": Brand.amber
         default: .secondary
         }
     }
@@ -320,32 +544,57 @@ struct GatePanel: View {
 
     private var isFix: Bool { feature.phase == .fixReview || feature.phase == .fixQA }
     private var devRan: Bool { feature.runs.contains { $0.role == .dev && $0.status == .done } }
+    private var gateTint: Color { feature.phase == .ready ? Brand.emerald : Brand.amber }
 
     var body: some View {
-        GroupBox {
-            VStack(alignment: .leading, spacing: 10) {
-                Label(title, systemImage: "hand.raised.fill").font(.headline)
-                Text(explanation).foregroundStyle(.secondary)
+        ForgeCard(padding: 18, cornerRadius: 13, tint: gateTint) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 10) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(gateTint.opacity(0.18))
+                            .frame(width: 32, height: 32)
+                        Image(systemName: feature.phase == .ready ? "checkmark.seal.fill" : "hand.raised.fill")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(gateTint)
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(title)
+                            .font(.headline)
+                        Text(explanation)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                }
+
                 if isFix {
-                    ForEach(Array(feature.pending.enumerated()), id: \.offset) { i, finding in
-                        Toggle(isOn: Binding(get: { !dropped.contains(i) }, set: { if $0 { dropped.remove(i) } else { dropped.insert(i) } })) {
-                            FindingsList(findings: [finding])
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(Array(feature.pending.enumerated()), id: \.offset) { i, finding in
+                            Toggle(isOn: Binding(get: { !dropped.contains(i) }, set: { if $0 { dropped.remove(i) } else { dropped.insert(i) } })) {
+                                FindingsList(findings: [finding])
+                            }
                         }
                     }
                 }
+
                 TextField(feature.phase == .ready ? "What should the dev agent change?" : "Note for the next step (optional)",
                           text: $note, axis: .vertical)
                     .lineLimit(2...6)
                     .textFieldStyle(.roundedBorder)
-                HStack {
+
+                HStack(spacing: 10) {
                     primaryButton
                     secondaryButton
                     Spacer()
-                    if devRan { Button("Show diff", action: showDiff) }
+                    if devRan {
+                        Button(action: showDiff) {
+                            Label("Inspect diff", systemImage: "doc.text.magnifyingglass")
+                        }
+                    }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(4)
         }
         .onChange(of: feature.phase) { note = ""; dropped = [] }
     }
@@ -353,7 +602,10 @@ struct GatePanel: View {
     @ViewBuilder private var primaryButton: some View {
         switch feature.phase {
         case .ready:
-            Button("Create PR…", action: createPullRequest).buttonStyle(.borderedProminent)
+            Button(action: createPullRequest) {
+                Label("Create PR…", systemImage: "arrow.triangle.pull")
+            }
+            .buttonStyle(.borderedProminent)
         case .fixReview, .fixQA:
             let kept = feature.pending.enumerated().filter { !dropped.contains($0.offset) }.map(\.element)
             Button(kept.isEmpty ? "Drop all and continue" : "Send \(kept.count) to dev") {
@@ -361,8 +613,12 @@ struct GatePanel: View {
             }
             .buttonStyle(.borderedProminent)
         default:
-            Button("Approve, start \(feature.phase == .qa ? "QA" : feature.phase.label.lowercased())") { act { $0.approve(note: note) } }
-                .buttonStyle(.borderedProminent)
+            Button {
+                act { $0.approve(note: note) }
+            } label: {
+                Label("Approve & start \(feature.phase == .qa ? "QA" : feature.phase.label.lowercased())", systemImage: "checkmark.circle.fill")
+            }
+            .buttonStyle(.borderedProminent)
         }
     }
 
@@ -416,38 +672,63 @@ struct DiffSheet: View {
     @State private var lines: [String]?
 
     var body: some View {
-        Group {
-            if let lines {
-                if lines.allSatisfy(\.isEmpty) {
-                    ContentUnavailableView("No change yet", systemImage: "doc")
-                } else {
-                    ScrollView([.vertical, .horizontal]) {
-                        LazyVStack(alignment: .leading, spacing: 0) {
-                            ForEach(lines.indices, id: \.self) { i in
-                                Text(lines[i].isEmpty ? " " : lines[i])
-                                    .font(.caption.monospaced())
-                                    .foregroundStyle(color(lines[i]))
-                                    .fixedSize()
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                Image(systemName: "doc.text.magnifyingglass")
+                    .foregroundStyle(Brand.amber)
+                Text("Worktree Diff")
+                    .font(.headline)
+                ForgeCodeChip(text: feature.branch, icon: "arrow.triangle.branch", tint: Brand.amber)
+                Text("vs")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                ForgeCodeChip(text: String(feature.baseCommit.prefix(8)), icon: "number", tint: .secondary)
+                Spacer()
+                Button("Done") { dismiss() }
+                    .buttonStyle(.borderedProminent)
+            }
+            .padding(14)
+            .background(.background.secondary)
+
+            Divider()
+
+            Group {
+                if let lines {
+                    if lines.allSatisfy(\.isEmpty) {
+                        ContentUnavailableView("No change yet", systemImage: "doc")
+                    } else {
+                        ScrollView([.vertical, .horizontal]) {
+                            LazyVStack(alignment: .leading, spacing: 0) {
+                                ForEach(lines.indices, id: \.self) { i in
+                                    Text(lines[i].isEmpty ? " " : lines[i])
+                                        .font(.system(size: 11.5, design: .monospaced))
+                                        .foregroundStyle(color(lines[i]))
+                                        .fixedSize()
+                                        .padding(.horizontal, 12)
+                                        .padding(.vertical, 1)
+                                }
                             }
+                            .textSelection(.enabled)
+                            .padding(.vertical, 10)
                         }
-                        .textSelection(.enabled)
-                        .padding()
+                        .background(Brand.obsidian)
+                        .environment(\.colorScheme, .dark)
                     }
+                } else {
+                    ProgressView("Computing git diff…")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
-            } else {
-                ProgressView()
             }
         }
-        .frame(width: 900, height: 640)
-        .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+        .frame(width: 920, height: 660)
         .task { lines = await Git.diff(worktree: feature.worktreePath, base: feature.baseCommit).components(separatedBy: "\n") }
     }
 
     private func color(_ line: String) -> Color {
-        if line.hasPrefix("+++") || line.hasPrefix("---") || line.hasPrefix("diff ") { return .primary }
-        if line.hasPrefix("+") { return .green }
-        if line.hasPrefix("-") { return .red }
-        if line.hasPrefix("@@") { return .blue }
-        return .secondary
+        if line.hasPrefix("+++") || line.hasPrefix("---") || line.hasPrefix("diff ") { return Brand.steel }
+        if line.hasPrefix("+") { return Brand.emerald }
+        if line.hasPrefix("-") { return Brand.crimson }
+        if line.hasPrefix("@@") { return Brand.indigo }
+        return Brand.steel.opacity(0.65)
     }
 }

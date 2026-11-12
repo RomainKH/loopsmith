@@ -14,11 +14,26 @@ struct ToolsView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                TextField("Filter", text: $filter).textFieldStyle(.roundedBorder)
-                Button("Reload") { Task { await load(reload: true) } }
+            HStack(spacing: 10) {
+                Image(systemName: "wrench.and.screwdriver.fill")
+                    .foregroundStyle(Brand.amber)
+                Text("Agent MCP Servers & Skills")
+                    .font(.headline)
+                Spacer()
+                TextField("Filter…", text: $filter)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 170)
+                Button {
+                    Task { await load(reload: true) }
+                } label: {
+                    Label("Reload", systemImage: "arrow.clockwise")
+                }
             }
-            .padding()
+            .padding(14)
+            .background(.background.secondary)
+
+            Divider()
+
             if let inventory {
                 List {
                     Section("MCP servers (\(inventory.servers.filter { !disabledMCP.contains($0.name) }.count) on)") {
@@ -26,9 +41,12 @@ struct ToolsView: View {
                             Toggle(isOn: enabled(server.name, in: $disabledMCP)) {
                                 HStack {
                                     Text(server.name)
+                                        .font(.callout.weight(.medium))
                                     Spacer()
-                                    Text(server.status).font(.caption)
-                                        .foregroundStyle(server.status == "connected" ? Color.green : Color.secondary)
+                                    PhaseBadge(
+                                        text: server.status.uppercased(),
+                                        tint: server.status == "connected" ? Brand.emerald : .secondary
+                                    )
                                 }
                             }
                         }
@@ -45,7 +63,7 @@ struct ToolsView: View {
                 ProgressView("Loading MCP servers and skills…").frame(maxHeight: .infinity)
             }
         }
-        .frame(width: 520, height: 560)
+        .frame(width: 540, height: 560)
         .toolbar {
             ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
         }

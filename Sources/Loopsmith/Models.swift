@@ -212,6 +212,17 @@ struct Project: Codable, Identifiable {
     var scanning = false
     var scanLog: [String] = []
     var scanError: String?
+    /// Jira project keys of this repository's tickets, as typed ("APP, WEB"); nil in files saved before.
+    var jiraKeys: String?
+
+    var jiraKeyList: [String] {
+        (jiraKeys ?? "").split(whereSeparator: { $0 == "," || $0.isWhitespace }).map { $0.uppercased() }
+    }
+
+    /// Whether a ticket belongs to this project; every ticket does while no key is set.
+    func owns(issueKey: String) -> Bool {
+        jiraKeyList.isEmpty || jiraKeyList.contains { issueKey.uppercased().hasPrefix($0 + "-") }
+    }
 }
 
 struct AgentRun: Codable, Identifiable {
