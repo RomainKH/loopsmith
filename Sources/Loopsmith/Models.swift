@@ -88,13 +88,12 @@ enum Role: String, Codable, CaseIterable {
     }
 }
 
-/// AI CLI connector backing an agent role: `claude -p`, `gemini -p` or the Antigravity CLI `agy --print`.
-/// The model string says which: `gemini-*` runs on Gemini CLI, `agy:<model>` on Antigravity (which also serves
-/// Claude models, hence the prefix), `api:<endpoint>/<model>` on Claude Code pointed at a custom API
-/// (a local server such as Ollama, a gateway such as LiteLLM), anything else on Claude Code.
+/// AI CLI connector backing an agent role: `claude -p` or the Antigravity CLI `agy --print`.
+/// The model string says which: `agy:<model>` runs on Antigravity (Gemini and Claude models, hence the prefix),
+/// `api:<endpoint>/<model>` on Claude Code pointed at a custom API (a local server such as Ollama, a gateway such
+/// as LiteLLM), anything else on Claude Code.
 enum AgentProvider: String, Codable, CaseIterable, Identifiable {
     case claude
-    case gemini
     case antigravity
     case custom
 
@@ -106,7 +105,6 @@ enum AgentProvider: String, Codable, CaseIterable, Identifiable {
     var label: String {
         switch self {
         case .claude: "Claude Code"
-        case .gemini: "Gemini CLI"
         case .antigravity: "Antigravity CLI"
         case .custom: "Custom API"
         }
@@ -115,7 +113,6 @@ enum AgentProvider: String, Codable, CaseIterable, Identifiable {
     var shortLabel: String {
         switch self {
         case .claude: "Claude"
-        case .gemini: "Gemini"
         case .antigravity: "Antigravity"
         case .custom: "Custom API"
         }
@@ -125,7 +122,6 @@ enum AgentProvider: String, Codable, CaseIterable, Identifiable {
     var binary: String {
         switch self {
         case .claude, .custom: "claude"
-        case .gemini: "gemini"
         case .antigravity: "agy"
         }
     }
@@ -133,7 +129,6 @@ enum AgentProvider: String, Codable, CaseIterable, Identifiable {
     var icon: String {
         switch self {
         case .claude: "bolt.horizontal.fill"
-        case .gemini: "sparkles"
         case .antigravity: "arrow.up.right.circle.fill"
         case .custom: "server.rack"
         }
@@ -142,7 +137,6 @@ enum AgentProvider: String, Codable, CaseIterable, Identifiable {
     var defaultModel: String {
         switch self {
         case .claude: "claude-opus-5-5"
-        case .gemini: "gemini-2.5-pro"
         case .antigravity: "agy:gemini-4-argon-medium"
         case .custom: "api:ollama/qwen3-coder"
         }
@@ -153,8 +147,6 @@ enum AgentProvider: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .claude:
             ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]
-        case .gemini:
-            ["gemini-2.5-pro", "gemini-2.5-flash"]
         case .antigravity:
             ["agy:gemini-4-argon-high", "agy:gemini-4-argon-medium", "agy:gemini-3.8-flash-medium",
              "agy:claude-opus-5-5-high", "agy:claude-sonnet-5-5-medium"]
@@ -167,8 +159,11 @@ enum AgentProvider: String, Codable, CaseIterable, Identifiable {
         let m = model.trimmed.lowercased()
         if m.hasPrefix(antigravityPrefix) { return .antigravity }
         if m.hasPrefix(customPrefix) { return .custom }
-        return m.hasPrefix("gemini") ? .gemini : .claude
+        return .claude
     }
+
+    /// A `gemini-*` model ran on Gemini CLI, which Loopsmith no longer drives: Antigravity serves the Gemini models.
+    static func isRetiredGeminiCLIModel(_ model: String) -> Bool { model.trimmed.lowercased().hasPrefix("gemini") }
 
     /// The model without its provider prefix, as the settings field shows it:
     /// "agy:gemini-4-argon-medium" → "gemini-4-argon-medium", "api:ollama/qwen3-coder" → "ollama/qwen3-coder".

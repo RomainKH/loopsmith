@@ -105,28 +105,11 @@ import Testing
 
     @Test func modelPrefixRoundTrips() {
         #expect(AgentProvider.detect(from: "agy:claude-opus-5-5-high") == .antigravity)
-        #expect(AgentProvider.detect(from: "claude-opus-5-5") == .claude && AgentProvider.detect(from: "gemini-2.5-pro") == .gemini)
+        #expect(AgentProvider.detect(from: "claude-opus-5-5") == .claude)
         #expect(AgentProvider.cliModel("agy:gemini-4-argon-medium") == "gemini-4-argon-medium")
         #expect(AgentProvider.antigravity.storedModel("gemini-3.8-flash-low") == "agy:gemini-3.8-flash-low")
         #expect(AgentProvider.antigravity.storedModel("agy:x") == "agy:x")
         #expect(AgentProvider.claude.storedModel("claude-opus-5-5") == "claude-opus-5-5")
         #expect(Agent.isValidIdentifier("agy:gemini-4-argon-medium"))
-    }
-
-    @Test func geminiCLIKeepsOnlyTheServersLeftOn() throws {
-        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("loopsmith-gemini-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: dir.appendingPathComponent(".gemini"), withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: dir) }
-        try Data(#"{"mcpServers":{"loopsmith-test-a":{},"loopsmith-test-b":{}}}"#.utf8)
-            .write(to: dir.appendingPathComponent(".gemini/settings.json"))
-        func allowed(_ disabled: [String]) -> [String]? {
-            let args = Agent.arguments(model: "gemini-2.5-pro", permissionMode: "auto", systemPrompt: "s", resume: nil, schema: nil,
-                                       readOnly: false, disabledMCP: disabled, disabledSkills: [], cwd: dir.path)
-            guard let i = args.firstIndex(of: "--allowed-mcp-server-names") else { return nil }
-            return Array(args[(i + 1)...].prefix { !$0.hasPrefix("--") })
-        }
-        #expect(allowed([]) == nil)
-        let kept = try #require(allowed(["loopsmith-test-a"]))
-        #expect(kept.contains("loopsmith-test-b") && !kept.contains("loopsmith-test-a"))
     }
 }

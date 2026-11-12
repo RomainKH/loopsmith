@@ -33,10 +33,10 @@
     <rect x="0" y="0" width="136" height="32" rx="8" fill="#FFFFFF" fill-opacity="0.06" stroke="#FFFFFF" stroke-opacity="0.1"/>
     <text x="68" y="21" text-anchor="middle" fill="#E2E8F0" font-family="ui-monospace, SFMono-Regular, monospace" font-size="13" font-weight="600">Claude Code</text>
 
-    <rect x="148" y="0" width="132" height="32" rx="8" fill="#FFFFFF" fill-opacity="0.06" stroke="#FFFFFF" stroke-opacity="0.1"/>
-    <text x="214" y="21" text-anchor="middle" fill="#E2E8F0" font-family="ui-monospace, SFMono-Regular, monospace" font-size="13" font-weight="600">Gemini CLI</text>
+    <rect x="148" y="0" width="152" height="32" rx="8" fill="#FFFFFF" fill-opacity="0.06" stroke="#FFFFFF" stroke-opacity="0.1"/>
+    <text x="224" y="21" text-anchor="middle" fill="#E2E8F0" font-family="ui-monospace, SFMono-Regular, monospace" font-size="13" font-weight="600">Antigravity CLI</text>
 
-    <rect x="292" y="0" width="440" height="32" rx="8" fill="#FFFFFF" fill-opacity="0.03" stroke="#FFFFFF" stroke-opacity="0.08"/>
-    <text x="512" y="21" text-anchor="middle" fill="#94A3B8" font-family="ui-monospace, SFMono-Regular, monospace" font-size="13">Analysis  →  Dev  →  2× Review  →  2× QA  →  GitHub PR</text>
+    <rect x="312" y="0" width="440" height="32" rx="8" fill="#FFFFFF" fill-opacity="0.03" stroke="#FFFFFF" stroke-opacity="0.08"/>
+    <text x="532" y="21" text-anchor="middle" fill="#94A3B8" font-family="ui-monospace, SFMono-Regular, monospace" font-size="13">Analysis  →  Dev  →  2× Review  →  2× QA  →  GitHub PR</text>
   </g>
 </svg>

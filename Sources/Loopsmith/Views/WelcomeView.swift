@@ -36,7 +36,7 @@ struct WelcomeView: View {
                         projectStep
                     case .agents:
                         setupStep("Connect your AI agents",
-                                  "Each step of a feature runs one of your own CLIs. Pick the model of each role: Claude Code, Antigravity or Gemini.",
+                                  "Each step of a feature runs one of your own CLIs. Pick the model of each role: Claude Code, Antigravity, or a local model or API of your own.",
                                   icon: "cpu.fill") {
                             AgentsSetupSections()
                         }

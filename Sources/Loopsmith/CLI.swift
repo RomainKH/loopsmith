@@ -45,8 +45,8 @@ enum CLI {
       endpoint test <name>            test it again and refresh its models
       endpoint remove <name>
 
-    A feature is named by its short id, its slug or its title. Models: claude-opus-5-5, gemini-2.5-pro,
-    agy:<model> (Antigravity), api:<endpoint>/<model> (custom API, e.g. api:ollama/qwen3-coder).
+    A feature is named by its short id, its slug or its title. Models: claude-opus-5-5 (Claude Code),
+    agy:<model> (Antigravity, e.g. agy:gemini-4-argon-high), api:<endpoint>/<model> (custom API, e.g. api:ollama/qwen3-coder).
     """
 
     static func run(_ args: [String]) async -> Int32 {

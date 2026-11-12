@@ -3,7 +3,7 @@
 ![Loopsmith](brand/banner.svg)
 
 A macOS app and a command-line tool (macOS, Linux, Windows through WSL) that take a feature from a prompt to a
-pull request with **Claude Code**, **Antigravity CLI** or **Gemini CLI** agents, or with **your own models**: a local
+pull request with **Claude Code** or **Antigravity CLI** agents, or with **your own models**: a local
 one through Ollama, LM Studio or llama.cpp, or any API behind a gateway such as LiteLLM or OpenRouter.
 
 ```
@@ -12,7 +12,7 @@ project folder → brief agent writes the project's brief (once, given to every 
 prompt / Jira ticket
    → git worktree for the feature
    → analysis agent: feasibility, approach, problems to handle, acceptance criteria
-   → dev agent (Claude Code, Antigravity CLI or Gemini CLI) implements
+   → dev agent (Claude Code, Antigravity CLI or your own model) implements
    → 2 independent review agents, no shared context  ─┐ blocking findings go back to dev,
    → 2 QA agents run the checks and test the feature  ─┘ up to N fix rounds per stage
    → you open the pull request from the app or the terminal
@@ -44,7 +44,7 @@ The installer does this for you.
 Then you need, on your `PATH`:
 
 - at least one agent CLI, logged in: [Claude Code](https://code.claude.com/docs) (`claude`, also what runs
-  local models and custom APIs), the Antigravity CLI (`agy`) or [Gemini CLI](https://github.com/google-gemini/gemini-cli) (`gemini`);
+  local models and custom APIs) or the Antigravity CLI (`agy`, which also serves the Gemini models);
 - `git`, and the [GitHub CLI](https://cli.github.com) logged in (`gh auth login`) for pull requests;
 - optionally a Jira Cloud site, your email and an [API token](https://id.atlassian.com/manage-profile/security/api-tokens),
   for tickets and worklogs.
@@ -105,10 +105,10 @@ a role. Adding an endpoint tests it and lists its models (`GET /v1/models`).
 - **One worktree per feature.** Pick a project, a base branch and optionally a Jira ticket.
   Loopsmith fetches the base, creates `feat/<ticket>-<title>` in `<worktrees folder>/<repo>/<slug>` and
   copies the untracked files you list (`.env` by default).
-- **Agents are your own CLIs.** Each agent is a `claude -p`, `agy --print` or `gemini -p` process run in the worktree,
-  with your login, settings, `CLAUDE.md` / `GEMINI.md`, MCP servers, skills and plugins. Each role (analysis, dev,
+- **Agents are your own CLIs.** Each agent is a `claude -p` or `agy --print` process run in the worktree,
+  with your login, settings, `CLAUDE.md`, MCP servers, skills and plugins. Each role (analysis, dev,
   review, QA) picks its model in Settings: `claude-*` runs on Claude Code, `agy:<model>` on the Antigravity CLI
-  (`agy:gemini-4-argon-high`, `agy:claude-opus-5-5-high`: the list comes from `agy models`), `gemini-*` on Gemini CLI,
+  (`agy:gemini-4-argon-high`, `agy:claude-opus-5-5-high`: the list comes from `agy models`),
   `api:<endpoint>/<model>` on Claude Code pointed at a custom API. Nothing is sent anywhere else.
 - **Analysis** comes first: a read-only agent studies the request against the code and answers with its
   feasibility (feasible, risky, blocked), the approach that fits the codebase, the files involved, the problems
@@ -131,7 +131,7 @@ a role. Adding an endpoint tests it and lists its models (`GET /v1/models`).
   branch and runs `gh pr create`. Agents never commit or push.
 - **Tools per project and per feature**: every MCP server and skill your CLIs have is on by default.
   Switch off the ones a feature does not need (Tools button): Claude Code denies them with `--disallowedTools`,
-  Antigravity with session-only `mcp(<server>/.*)` deny rules, Gemini CLI with `--allowed-mcp-server-names`.
+  Antigravity with session-only `mcp(<server>/.*)` deny rules.
   Skills can only be switched off for Claude Code agents. Each project holds the default set for its new features.
 - **Stop / Continue**: stopping kills the agents (Ctrl-C in the terminal); Continue (`loopsmith run`) resumes from
   the current step. Features and agent logs are kept in `~/Library/Application Support/Loopsmith` on macOS and
@@ -175,7 +175,7 @@ Bump `Loopsmith.version` in `Sources/Loopsmith/Entry.swift`, then push a matchin
 | Worktrees folder | `~/Loopsmith` |
 | Models (analysis and brief, dev, review, QA) | `claude-opus-5-5` |
 | Wait for my approval after each step | on |
-| Permission mode | `auto`: Claude Code's classifier approves safe actions; Gemini CLI has no classifier and runs every tool. `acceptEdits` denies shell commands the agents would need for tests. `bypassPermissions` runs everything unchecked. |
+| Permission mode | `auto`: Claude Code's classifier approves safe actions. `acceptEdits` denies shell commands the agents would need for tests. `bypassPermissions` runs everything unchecked. |
 | Custom API permissions | `acceptEdits`: no auto mode without a Claude model. `bypassPermissions` lets these agents run commands. |
 | Custom APIs | none: Settings → Agents & AI, or `loopsmith endpoint add` |
 | Antigravity permissions | `auto` uses agy's auto mode. Some accounts have none: headless `agy` then refuses whatever your agy rules do not allow, and the step fails with agy's message. `bypassPermissions` allows every command through session rules (never `--dangerously-skip-permissions`), so analysis, review and QA agents still cannot write files and switched-off MCP servers stay off. |

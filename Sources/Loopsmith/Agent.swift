@@ -16,7 +16,7 @@ enum AgentEvent: Equatable {
     case result(AgentResult)
 }
 
-/// Reassembles streamed `.delta` pieces (Gemini CLI, Antigravity CLI) into the latest assistant message without inserting line breaks mid-token.
+/// Reassembles streamed `.delta` pieces (Antigravity CLI) into the latest assistant message without inserting line breaks mid-token.
 struct ReplyBuffer {
     private(set) var text = ""
     private var inDelta = false
@@ -68,7 +68,7 @@ struct Lens {
     let brief: String
 }
 
-/// Everything that talks to the AI agent CLIs (`claude -p`, `gemini -p`, `agy --print`; stream-json output).
+/// Everything that talks to the AI agent CLIs (`claude -p`, `agy --print`; stream-json output).
 enum Agent {
     /// `/` is allowed for custom API models (`api:openrouter/moonshotai/kimi-k2`); a leading `-` never is.
     private static let identifierRegex = try! Regex(#"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$"#)
@@ -87,11 +87,10 @@ enum Agent {
         AgentProvider.detect(from: model) == .antigravity ? "" : prompt
     }
 
-    /// `prompt` is only used by Antigravity (the others read it on stdin), `cwd` only by Gemini CLI (its MCP servers),
-    /// `withoutMCP` only by Claude Code.
+    /// `prompt` is only used by Antigravity (Claude Code reads it on stdin), `withoutMCP` only by Claude Code.
     static func arguments(model: String, permissionMode: String, systemPrompt: String, resume: String?,
                           schema: String?, readOnly: Bool, disabledMCP: [String], disabledSkills: [String],
-                          prompt: String = "", cwd: String = "", withoutMCP: Bool = false) -> [String] {
+                          prompt: String = "", withoutMCP: Bool = false) -> [String] {
         let provider = AgentProvider.detect(from: model)
         let safeModel = isValidIdentifier(model) ? model.trimmed : provider.defaultModel
         var safeMode = sanitizePermissionMode(permissionMode)
@@ -119,31 +118,6 @@ enum Agent {
                 + disabledMCP.map { "mcp__" + mcpToolPrefix($0) }
                 + disabledSkills.map { "Skill(\($0))" }
             if !denied.isEmpty { args += ["--disallowedTools", denied.joined(separator: ",")] }
-            return args
-
-        case .gemini:
-            let approvalMode: String
-            switch safeMode {
-            case "acceptEdits":
-                approvalMode = readOnly ? "plan" : "auto_edit"
-            default:
-                approvalMode = "yolo"
-            }
-            var instruction = systemPrompt
-            if readOnly {
-                instruction += "\n\nIMPORTANT: You are in read-only mode. Do NOT modify, write, or delete any repository files."
-            }
-            if let schema { instruction += "\n\n" + jsonAnswerInstruction(schema) }
-            var args = ["gemini", "-p", instruction, "--output-format", "stream-json", "--model", safeModel,
-                        "--approval-mode", approvalMode, "--skip-trust"]
-            if let safeResume { args += ["--resume", safeResume] }
-            let disabled = Set(disabledMCP)
-            let geminiServers = geminiInventory(cwd: cwd).servers.map(\.name)
-            if geminiServers.contains(where: disabled.contains) {
-                let allowed = geminiServers.filter { !disabled.contains($0) }
-                // An empty list means no filter at all: name a server that does not exist instead.
-                args += ["--allowed-mcp-server-names"] + (allowed.isEmpty ? ["loopsmith-none"] : allowed)
-            }
             return args
 
         case .antigravity:
@@ -181,7 +155,7 @@ enum Agent {
         return name.trimmingCharacters(in: CharacterSet(charactersIn: "_"))
     }
 
-    /// Extracts a JSON object from raw text or a fenced ```json block (used when Gemini CLI returns structured output in text).
+    /// Extracts a JSON object from raw text or a fenced ```json block (custom API models answer their JSON in text).
     static func extractStructuredJSON(from text: String) -> Data? {
         let trimmed = text.trimmed
         guard !trimmed.isEmpty else { return nil }
@@ -200,7 +174,7 @@ enum Agent {
         return try? JSONSerialization.data(withJSONObject: obj)
     }
 
-    /// Turns one stream-json line (Claude Code or Gemini CLI) into what the app shows and keeps.
+    /// Turns one stream-json line (Claude Code or Antigravity CLI) into what the app shows and keeps.
     static func parse(_ line: String) -> [AgentEvent] {
         guard let obj = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? [String: Any] else {
             return line.trimmed.isEmpty ? [] : [.log(line)]
@@ -209,9 +183,6 @@ enum Agent {
         switch obj["type"] as? String {
         case "system":
             if obj["subtype"] as? String == "init", let id = obj["session_id"] as? String { return [.session(id)] }
-            return []
-        case "init":
-            if let id = obj["session_id"] as? String { return [.session(id)] }
             return []
         case "assistant":
             let content = (obj["message"] as? [String: Any])?["content"] as? [[String: Any]] ?? []
@@ -225,17 +196,6 @@ enum Agent {
                     return nil
                 }
             }
-        case "message":
-            guard obj["role"] as? String == "assistant",
-                  let content = obj["content"] as? String, !content.isEmpty else { return [] }
-            if obj["delta"] as? Bool == true {
-                return [.delta(content)]
-            }
-            return content.nonEmpty.map { [.log($0.trimmed)] } ?? []
-        case "tool_use":
-            let name = obj["tool_name"] as? String ?? obj["name"] as? String ?? "tool"
-            let detail = toolDetail(obj["parameters"] ?? obj["input"])
-            return [.log("→ \(name) \(detail)".trimmed)]
         case "user":
             let content = (obj["message"] as? [String: Any])?["content"] as? [[String: Any]] ?? []
             return content.compactMap { item in
@@ -245,23 +205,9 @@ enum Agent {
                     ?? ""
                 return .log("✗ \(text.prefix(400))")
             }
-        case "tool_result":
-            let isErr = (obj["status"] as? String == "error") || (obj["is_error"] as? Bool == true)
-            guard isErr else { return [] }
-            let msg = (obj["error"] as? [String: Any])?["message"] as? String
-                ?? (obj["output"] as? String)
-                ?? "Tool error"
-            return [.log("✗ \(msg.prefix(400))")]
-        case "error":
-            guard let msg = (obj["message"] as? String)?.nonEmpty else { return [] }
-            return [.log("✗ \(msg.prefix(400))")]
         case "result":
-            let isError = (obj["is_error"] as? Bool ?? false) || (obj["status"] as? String == "error")
-            let errObjMsg = (obj["error"] as? [String: Any])?["message"] as? String
-            let text = (obj["result"] as? String)
-                ?? (obj["response"] as? String)
-                ?? errObjMsg
-                ?? ""
+            let isError = obj["is_error"] as? Bool ?? false
+            let text = obj["result"] as? String ?? ""
             var structured: Data?
             if let value = obj["structured_output"], JSONSerialization.isValidJSONObject(value) {
                 structured = try? JSONSerialization.data(withJSONObject: value)
@@ -279,7 +225,7 @@ enum Agent {
         }
     }
 
-    /// Extracts total token usage from Claude Code (`usage`), Gemini CLI (`stats`), or Antigravity CLI (`usage`/`tokens`).
+    /// Extracts total token usage from Claude Code (`usage`) or Antigravity CLI (`usage`/`total_tokens`).
     private static func extractTokens(from obj: [String: Any]) -> Int? {
         if let usage = obj["usage"] as? [String: Any] {
             if let total = usage["total_tokens"] as? Int, total > 0 { return total }
@@ -287,12 +233,6 @@ enum Agent {
                 + (usage["cache_read_input_tokens"] as? Int ?? 0)
                 + (usage["cache_creation_input_tokens"] as? Int ?? 0)
             let output = usage["output_tokens"] as? Int ?? 0
-            if input + output > 0 { return input + output }
-        }
-        if let stats = obj["stats"] as? [String: Any] {
-            if let total = stats["total_tokens"] as? Int, total > 0 { return total }
-            let input = stats["input_tokens"] as? Int ?? 0
-            let output = stats["output_tokens"] as? Int ?? 0
             if input + output > 0 { return input + output }
         }
         if let total = obj["total_tokens"] as? Int, total > 0 { return total }
@@ -347,7 +287,7 @@ enum Agent {
         return ""
     }
 
-    /// Checks whether a provider's CLI (`claude` or `gemini`) is installed and reachable on PATH.
+    /// Checks whether a provider's CLI (`claude` or `agy`) is installed and reachable on PATH.
     static func cliStatus(_ provider: AgentProvider) async -> (installed: Bool, detail: String) {
         let res = await Shell.run([provider.binary, "--version"])
         let output = (res.out.nonEmpty ?? res.err.nonEmpty ?? "").trimmed
@@ -363,7 +303,7 @@ enum Agent {
         return (false, "Not found on PATH (`\(provider.binary)`)")
     }
 
-    /// Reads the MCP servers and skills of a folder from Claude Code, Gemini CLI and Antigravity CLI.
+    /// Reads the MCP servers and skills of a folder from Claude Code and Antigravity CLI.
     /// Skills come from Claude Code only: the other CLIs cannot switch one off for a session.
     static func inventory(cwd: String) async throws -> ToolInventory {
         var found: ToolInventory?
@@ -383,9 +323,9 @@ enum Agent {
             running?.terminate()
         }
 
-        let others = geminiInventory(cwd: cwd).servers + (await antigravityServers(cwd: cwd))
+        let others = await antigravityServers(cwd: cwd)
         guard found != nil || !others.isEmpty else {
-            throw AppError("Could not list tools (make sure Claude Code, Gemini CLI or Antigravity CLI is installed and logged in)")
+            throw AppError("Could not list tools (make sure Claude Code or Antigravity CLI is installed and logged in)")
         }
         var base = found ?? ToolInventory(servers: [], skills: [])
         for server in others where !base.servers.contains(where: { $0.name == server.name }) {
@@ -423,26 +363,6 @@ enum Agent {
             guard line.contains("\t"), let id = line.split(separator: "\t").first, isValidIdentifier(String(id)) else { return nil }
             return AgentProvider.antigravity.storedModel(String(id))
         }
-    }
-
-    /// Reads the MCP servers configured in `~/.gemini` and `<cwd>/.gemini` without spawning a paid model call.
-    static func geminiInventory(cwd: String) -> ToolInventory {
-        let home = NSHomeDirectory()
-        let settingsFiles = [
-            "\(home)/.gemini/settings.json",
-            "\(cwd)/.gemini/settings.json"
-        ]
-        var serverNames = Set<String>()
-        for path in settingsFiles {
-            if let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
-               let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-               let mcp = json["mcpServers"] as? [String: Any] {
-                serverNames.formUnion(mcp.keys)
-            }
-        }
-        let servers = serverNames.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
-            .map { ToolInventory.Server(name: $0, status: "gemini") }
-        return ToolInventory(servers: servers, skills: [])
     }
 
     // MARK: Prompts

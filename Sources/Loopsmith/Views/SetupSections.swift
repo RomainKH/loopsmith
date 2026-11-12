@@ -8,7 +8,6 @@ import SwiftUI
 struct AgentsSetupSections: View {
     @Environment(AppStore.self) private var store
     @State private var claudeStatus: (installed: Bool, detail: String)?
-    @State private var geminiStatus: (installed: Bool, detail: String)?
     @State private var antigravityStatus: (installed: Bool, detail: String)?
     @State private var antigravityModels: [String] = []
 
@@ -17,7 +16,6 @@ struct AgentsSetupSections: View {
         Section("CLI Connectors") {
             ConnectorStatusRow(provider: .claude, status: claudeStatus)
             ConnectorStatusRow(provider: .antigravity, status: antigravityStatus)
-            ConnectorStatusRow(provider: .gemini, status: geminiStatus)
             Text("Only the installation is checked: an agent run tells whether the CLI is logged in.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -92,28 +90,24 @@ struct AgentsSetupSections: View {
                 Text("Accept edits (no shell commands)").tag("acceptEdits")
                 Text("Bypass (no check)").tag("bypassPermissions")
             }
-            Text("Auto: Claude Code's classifier checks each action; Antigravity uses its own auto mode, which some accounts do not have: headless agy then refuses whatever your agy rules do not allow, and the step fails. Bypass lets Antigravity run every command, while still keeping the analysis, review and QA agents from writing files and the agents of a feature from the MCP servers switched off. Gemini CLI has no classifier: it runs every tool. Analysis, review and QA agents cannot use the file editing tools (a shell command still could).")
+            Text("Auto: Claude Code's classifier checks each action; Antigravity uses its own auto mode, which some accounts do not have: headless agy then refuses whatever your agy rules do not allow, and the step fails. Bypass lets Antigravity run every command, while still keeping the analysis, review and QA agents from writing files and the agents of a feature from the MCP servers switched off. Analysis, review and QA agents cannot use the file editing tools (a shell command still could).")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
         .task {
             if let c = store.cliStatuses[.claude] { claudeStatus = c }
-            if let g = store.cliStatuses[.gemini] { geminiStatus = g }
             if let a = store.cliStatuses[.antigravity] { antigravityStatus = a }
             if let m = store.cachedAntigravityModels { antigravityModels = m }
 
             if store.cliStatuses.isEmpty {
                 async let claude = Agent.cliStatus(.claude)
-                async let gemini = Agent.cliStatus(.gemini)
                 async let antigravity = Agent.cliStatus(.antigravity)
                 async let models = Agent.antigravityModels()
-                let (c, g, a, m) = await (claude, gemini, antigravity, models)
+                let (c, a, m) = await (claude, antigravity, models)
                 claudeStatus = c
-                geminiStatus = g
                 antigravityStatus = a
                 antigravityModels = m
                 store.cliStatuses[.claude] = c
-                store.cliStatuses[.gemini] = g
                 store.cliStatuses[.antigravity] = a
                 store.cachedAntigravityModels = m
             }
@@ -414,11 +408,6 @@ private struct RoleModelRow: View {
                     Section("Antigravity CLI") {
                         ForEach(antigravityModels.isEmpty ? AgentProvider.antigravity.presetModels : antigravityModels, id: \.self) { m in
                             Button(AgentProvider.cliModel(m)) { model = m }
-                        }
-                    }
-                    Section("Gemini CLI") {
-                        ForEach(AgentProvider.gemini.presetModels, id: \.self) { m in
-                            Button(m) { model = m }
                         }
                     }
                     ForEach(endpoints) { e in

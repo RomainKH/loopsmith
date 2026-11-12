@@ -34,69 +34,27 @@ import Testing
         #expect(Agent.parse("  ").isEmpty)
     }
 
-    /// The real Gemini CLI stream (0.47, nonInteractiveCli): the answer comes as `delta` pieces, cut anywhere, and the
-    /// success `result` carries stats only. Joining the pieces with line breaks put a newline inside the JSON strings.
-    @Test func geminiStreamGivesBackTheWholeFinalMessage() throws {
-        let lines = [
-            #"{"type":"init","session_id":"0b6f8a39-2c1e-4c55-9a43-8f1f6d7e2a10","model":"gemini-2.5-pro"}"#,
-            #"{"type":"message","role":"user","content":"Review this"}"#,
-            #"{"type":"message","role":"assistant","content":"Let me look at ","delta":true}"#,
-            #"{"type":"message","role":"assistant","content":"the diff.","delta":true}"#,
-            #"{"type":"tool_use","tool_name":"run_shell_command","tool_id":"t1","parameters":{"command":"git diff abc"}}"#,
-            #"{"type":"tool_result","tool_id":"t1","status":"success","output":"+x"}"#,
-            #"{"type":"message","role":"assistant","content":"{\"summary\":\"Looks g","delta":true}"#,
-            #"{"type":"message","role":"assistant","content":"ood\",\"findings\":[]}","delta":true}"#,
-            #"{"type":"result","status":"success","stats":{"total_tokens":10}}"#,
-        ]
-        var reply = ReplyBuffer()
-        var log: [String] = []
-        var result: AgentResult?
-        for line in lines {
-            for event in Agent.parse(line) {
-                let continues = reply.take(event)
-                switch event {
-                case .delta(let piece): log.appendLog(piece, continuing: continues)
-                case .log(let text): log.appendLog(text, continuing: false)
-                case .result(let r): result = r
-                case .session: break
-                }
-            }
-        }
-        #expect(Agent.parse(lines[0]) == [.session("0b6f8a39-2c1e-4c55-9a43-8f1f6d7e2a10")])
-        #expect(log == ["Let me look at the diff.", "→ run_shell_command git diff abc", #"{"summary":"Looks good","findings":[]}"#])
-        let done = try #require(result)
-        #expect(!done.isError && done.text.isEmpty && done.tokens == 10)
-        let verdict = try JSONDecoder().decode(Verdict.self, from: try #require(Agent.extractStructuredJSON(from: reply.text)))
-        #expect(verdict.summary == "Looks good")
-    }
-
-    @Test func geminiErrorsAreReported() {
-        let failed = #"{"type":"result","status":"error","error":{"type":"FatalAuthenticationError","message":"Error authenticating"}}"#
-        guard case .result(let r) = Agent.parse(failed).first else { Issue.record("no result"); return }
-        #expect(r.isError && r.text == "Error authenticating")
-        #expect(Agent.parse(#"{"type":"tool_result","status":"error","error":{"message":"permission denied"}}"#) == [.log("✗ permission denied")])
+    @Test func resultReportsTheTokensUsed() throws {
+        let line = #"{"type":"result","is_error":false,"result":"done","usage":{"input_tokens":10,"cache_read_input_tokens":5,"cache_creation_input_tokens":2,"output_tokens":3}}"#
+        guard case .result(let r) = Agent.parse(line).first else { Issue.record("no result"); return }
+        #expect(r.tokens == 20 && r.text == "done")
     }
 }
 
 @Suite struct AgentArgumentsTests {
     @Test func providerIsDetectedFromModelName() {
         #expect(AgentProvider.detect(from: "claude-opus-5-5") == .claude)
-        #expect(AgentProvider.detect(from: "gemini-2.5-pro") == .gemini)
-        #expect(AgentProvider.detect(from: "GEMINI-3-FLASH-PREVIEW") == .gemini)
+        #expect(AgentProvider.detect(from: "AGY:gemini-4-argon-high") == .antigravity)
+        #expect(AgentProvider.detect(from: "api:ollama/qwen3-coder") == .custom)
     }
 
-    @Test func geminiArgumentsUseHeadlessStreamJsonAndResume() {
-        let args = Agent.arguments(model: "gemini-2.5-pro", permissionMode: "auto", systemPrompt: "Be concise.",
-                                   resume: "gem-session-1", schema: Agent.verdictSchema, readOnly: true,
-                                   disabledMCP: [], disabledSkills: [])
-        #expect(args.first == "gemini")
-        #expect(args.contains("--output-format") && args.contains("stream-json"))
-        #expect(args.contains("--skip-trust"))
-        #expect(args.contains("--approval-mode") && args.contains("yolo"))
-        #expect(args.contains("--resume") && args.contains("gem-session-1"))
-        let pIndex = try! #require(args.firstIndex(of: "-p"))
-        #expect(args[pIndex + 1].contains("Be concise.") && args[pIndex + 1].contains("read-only mode"))
+    @Test func rolesSetOnGeminiCLIMoveToAntigravity() throws {
+        let saved = #"{"analysisModel":"gemini-2.5-pro","devModel":"claude-opus-5-5","reviewModel":"GEMINI-3-FLASH-PREVIEW","qaModel":"agy:gemini-3.8-flash-medium"}"#
+        let s = try JSONDecoder().decode(Settings.self, from: Data(saved.utf8))
+        #expect(s.analysisModel == AgentProvider.antigravity.defaultModel && s.reviewModel == AgentProvider.antigravity.defaultModel)
+        #expect(s.devModel == "claude-opus-5-5" && s.qaModel == "agy:gemini-3.8-flash-medium")
     }
+
     @Test func mcpPrefixesMatchClaudeCodeToolNames() {
         #expect(Agent.mcpToolPrefix("claude.ai Atlassian Rovo (2)") == "claude_ai_Atlassian_Rovo_2")
         #expect(Agent.mcpToolPrefix("plugin:claude-mem:mcp-search") == "plugin_claude-mem_mcp-search")

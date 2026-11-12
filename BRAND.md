@@ -33,7 +33,7 @@
 | `Brand.steel` | `#D9DFE8` | Brushed steel highlight |
 | `Brand.amber` | `#EC9925` | Primary action & active stage accent |
 | `Brand.claude` | `#DA7D5C` | Claude Code provider indicator (`bolt.horizontal.fill`) |
-| `Brand.gemini` | `#6196F5` | Gemini CLI provider indicator (`sparkles`) |
+| `Brand.cobalt` | `#5883F9` | Antigravity CLI provider indicator (`arrow.up.right.circle.fill`) |
 | `Brand.emerald` | `#21B882` | Passed checks / Ready for PR |
 | `Brand.crimson` | `#E84A4A` | Blocker finding / Error state |
 

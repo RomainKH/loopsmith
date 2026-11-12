@@ -181,7 +181,7 @@ extension AppStore {
                                    systemPrompt: Agent.withBrief(system, brief: project(at: f.repoPath)?.brief),
                                    resume: resume, schema: schema, readOnly: role != .dev,
                                    disabledMCP: f.disabledMCP, disabledSkills: f.disabledSkills,
-                                   prompt: prompt, cwd: f.worktreePath, withoutMCP: runsWithoutMCP(model: model))
+                                   prompt: prompt, withoutMCP: runsWithoutMCP(model: model))
         let cliName = provider.binary
         var result: AgentResult?
         var reply = ReplyBuffer()
@@ -277,7 +277,7 @@ extension AppStore {
         let args = Agent.arguments(model: settings.analysisModel, permissionMode: settings.permissionMode(for: settings.analysisModel),
                                    systemPrompt: Agent.projectBriefSystemPrompt, resume: nil, schema: nil, readOnly: true,
                                    disabledMCP: p.disabledMCP, disabledSkills: p.disabledSkills,
-                                   prompt: request, cwd: p.path, withoutMCP: runsWithoutMCP(model: settings.analysisModel))
+                                   prompt: request, withoutMCP: runsWithoutMCP(model: settings.analysisModel))
         let cliName = AgentProvider.detect(from: settings.analysisModel).binary
         var result: AgentResult?
         var reply = ReplyBuffer()

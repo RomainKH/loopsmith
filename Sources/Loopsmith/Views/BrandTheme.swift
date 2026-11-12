@@ -19,7 +19,6 @@ enum Brand {
     static let indigo   = Color(red: 0.518, green: 0.455, blue: 0.965)   // #8474F6 (Deep Ultraviolet Indigo)
     static let cyan     = Color(red: 0.275, green: 0.690, blue: 0.925)   // #46B0EC (Glacier Cyan)
     static let claude   = Color(red: 0.640, green: 0.540, blue: 0.950)   // #A38AF2 (Cool Violet for Claude)
-    static let gemini   = Color(red: 0.275, green: 0.690, blue: 0.925)   // #46B0EC (Glacier Cyan for Gemini)
     static let emerald  = Color(red: 0.157, green: 0.745, blue: 0.565)   // #28BE90 (Cool Mint Emerald)
     static let crimson  = Color(red: 0.925, green: 0.310, blue: 0.380)   // #EC4F61 (Cool Rose Crimson)
 
@@ -30,7 +29,6 @@ enum Brand {
     static func providerColor(_ provider: AgentProvider) -> Color {
         switch provider {
         case .claude: claude
-        case .gemini: gemini
         case .antigravity: cobalt
         case .custom: emerald
         }

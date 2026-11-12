@@ -85,10 +85,15 @@ struct Settings: Codable, Equatable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let d = Settings()
         worktreesRoot = try c.decodeIfPresent(String.self, forKey: .worktreesRoot) ?? d.worktreesRoot
-        analysisModel = try c.decodeIfPresent(String.self, forKey: .analysisModel) ?? d.analysisModel
-        devModel = try c.decodeIfPresent(String.self, forKey: .devModel) ?? d.devModel
-        reviewModel = try c.decodeIfPresent(String.self, forKey: .reviewModel) ?? d.reviewModel
-        qaModel = try c.decodeIfPresent(String.self, forKey: .qaModel) ?? d.qaModel
+        // Roles set on Gemini CLI, which is no longer supported, move to Antigravity's default Gemini model.
+        func model(_ key: CodingKeys, _ fallback: String) throws -> String {
+            let saved = try c.decodeIfPresent(String.self, forKey: key) ?? fallback
+            return AgentProvider.isRetiredGeminiCLIModel(saved) ? AgentProvider.antigravity.defaultModel : saved
+        }
+        analysisModel = try model(.analysisModel, d.analysisModel)
+        devModel = try model(.devModel, d.devModel)
+        reviewModel = try model(.reviewModel, d.reviewModel)
+        qaModel = try model(.qaModel, d.qaModel)
         permissionMode = try c.decodeIfPresent(String.self, forKey: .permissionMode) ?? d.permissionMode
         antigravityPermissionMode = try c.decodeIfPresent(String.self, forKey: .antigravityPermissionMode) ?? d.antigravityPermissionMode
         customPermissionMode = try c.decodeIfPresent(String.self, forKey: .customPermissionMode) ?? d.customPermissionMode
