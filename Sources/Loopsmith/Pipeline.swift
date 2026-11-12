@@ -76,14 +76,27 @@ extension AppStore {
                 }
                 update(id) { $0.userNote = nil }
                 save()
+                if let now = feature(id), now.phase == .ready {
+                    notify(role: .qa, title: "\(Role.qa.personaName) passed QA: ready for the pull request", subtitle: now.title,
+                           featureID: id, systemNotification: true)
+                    return
+                }
                 if settings.approveEachStep, let next = feature(id)?.phase, next != .ready, next != .prOpened {
                     update(id) { $0.awaitingApproval = true }
                     save()
+                    notify(role: nil, title: "Your approval is needed",
+                           subtitle: "\(feature(id)?.title ?? "") · next: \(next.label)",
+                           featureID: id, systemNotification: true)
                     return
                 }
             }
         } catch {
-            if !Task.isCancelled { update(id) { $0.error = error.localizedDescription } }
+            if !Task.isCancelled {
+                update(id) { $0.error = error.localizedDescription }
+                notify(role: nil, title: "Pipeline stopped",
+                       subtitle: "\(feature(id)?.title ?? "Feature") — \(error.localizedDescription)",
+                       featureID: id, isError: true, systemNotification: true)
+            }
         }
     }
 
@@ -159,14 +172,34 @@ extension AppStore {
         guard let f = feature(id) else { throw AppError("Feature not found") }
         let run = AgentRun(role: role, lens: lens, model: model)
         update(id) { $0.runs.append(run) }
+        let provider = AgentProvider.detect(from: model)
+        notify(role: role, provider: provider,
+               title: "\(role.personaName) (\(role.shortTitle)) takes over",
+               subtitle: "\(f.title) · \(lens) via \(provider.shortLabel)",
+               featureID: id)
         let args = Agent.arguments(model: model, permissionMode: settings.permissionMode(for: model),
                                    systemPrompt: Agent.withBrief(system, brief: project(at: f.repoPath)?.brief),
                                    resume: resume, schema: schema, readOnly: role != .dev,
                                    disabledMCP: f.disabledMCP, disabledSkills: f.disabledSkills,
                                    prompt: prompt, cwd: f.worktreePath)
-        let cliName = AgentProvider.detect(from: model).binary
+        let cliName = provider.binary
         var result: AgentResult?
         var reply = ReplyBuffer()
+        var pendingLogs: [(text: String, continuing: Bool)] = []
+        var lastFlush = CFAbsoluteTimeGetCurrent()
+
+        func flushLogs() {
+            guard !pendingLogs.isEmpty else { return }
+            let batch = pendingLogs
+            pendingLogs.removeAll(keepingCapacity: true)
+            self.updateRun(id, run.id) { r in
+                for item in batch {
+                    r.recordLog(item.text, continuing: item.continuing)
+                }
+            }
+            lastFlush = CFAbsoluteTimeGetCurrent()
+        }
+
         do {
             let exit = try await Shell.stream(args, cwd: f.worktreePath, input: Agent.stdin(model: model, prompt: prompt),
                                               register: { self.processes[id, default: []].append($0) }) { line in
@@ -177,14 +210,18 @@ extension AppStore {
                         self.updateRun(id, run.id) { $0.sessionId = session }
                         if role == .dev { self.update(id) { $0.devSessionId = session } }
                     case .delta(let piece):
-                        self.updateRun(id, run.id) { $0.log.appendLog(piece, continuing: continues) }
+                        pendingLogs.append((piece, continues))
                     case .log(let text):
-                        self.updateRun(id, run.id) { $0.log.appendLog(text, continuing: false) }
+                        pendingLogs.append((text, false))
                     case .result(let r):
                         result = r
                     }
                 }
+                if CFAbsoluteTimeGetCurrent() - lastFlush >= 0.10 {
+                    flushLogs()
+                }
             }
+            flushLogs()
             if let refusal = Agent.antigravityRefusal(model: model, stderr: exit.err) { throw AppError(refusal) }
             if var done = result, !done.isError {
                 if done.text.trimmed.isEmpty, let full = reply.text.nonEmpty {
@@ -193,7 +230,13 @@ extension AppStore {
                 if done.structured == nil, schema != nil {
                     done.structured = Agent.extractStructuredJSON(from: done.text)
                 }
-                updateRun(id, run.id) { $0.status = .done; $0.summary = done.text; $0.cost = done.cost; $0.endedAt = Date() }
+                updateRun(id, run.id) {
+                    $0.status = .done
+                    $0.summary = done.text
+                    $0.cost = done.cost
+                    $0.tokens = done.tokens
+                    $0.endedAt = Date()
+                }
                 if role == .dev, let session = done.sessionId { update(id) { $0.devSessionId = session } }
                 save()
                 return (run.id, done)
@@ -235,6 +278,21 @@ extension AppStore {
         let cliName = AgentProvider.detect(from: settings.analysisModel).binary
         var result: AgentResult?
         var reply = ReplyBuffer()
+        var pendingScanLogs: [(text: String, continuing: Bool)] = []
+        var lastFlush = CFAbsoluteTimeGetCurrent()
+
+        func flushScanLogs() {
+            guard !pendingScanLogs.isEmpty else { return }
+            let batch = pendingScanLogs
+            pendingScanLogs.removeAll(keepingCapacity: true)
+            self.updateProject(id) { proj in
+                for item in batch {
+                    proj.scanLog.appendLog(item.text, continuing: item.continuing)
+                }
+            }
+            lastFlush = CFAbsoluteTimeGetCurrent()
+        }
+
         do {
             let exit = try await Shell.stream(args, cwd: p.path, input: Agent.stdin(model: settings.analysisModel, prompt: request),
                                               register: { self.processes[id, default: []].append($0) }) { line in
@@ -242,14 +300,18 @@ extension AppStore {
                     let continues = reply.take(event)
                     switch event {
                     case .delta(let piece):
-                        self.updateProject(id) { $0.scanLog.appendLog(piece, continuing: continues) }
+                        pendingScanLogs.append((piece, continues))
                     case .log(let text):
-                        self.updateProject(id) { $0.scanLog.appendLog(text, continuing: false) }
+                        pendingScanLogs.append((text, false))
                     case .result(let r): result = r
                     case .session: break
                     }
                 }
+                if CFAbsoluteTimeGetCurrent() - lastFlush >= 0.10 {
+                    flushScanLogs()
+                }
             }
+            flushScanLogs()
             if let refusal = Agent.antigravityRefusal(model: settings.analysisModel, stderr: exit.err) { throw AppError(refusal) }
             if var done = result, !done.isError {
                 if done.text.trimmed.isEmpty, let full = reply.text.nonEmpty {

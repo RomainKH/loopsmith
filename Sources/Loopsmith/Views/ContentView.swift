@@ -113,16 +113,24 @@ struct ProjectWorkspace: View {
                     .keyboardShortcut("n")
             }
         } detail: {
-            switch selection {
-            case .overview, nil:
-                ProjectHomeView(project: project, navigate: { selection = $0 }, newFeature: { showNewFeature = true })
-            case .pullRequests:
-                PullRequestsView(project: project) { selection = .feature($0) }
-            case .worklog:
-                WorklogView(project: project)
-            case .feature(let id):
-                FeatureView(id: id)
+            ZStack(alignment: .topTrailing) {
+                Group {
+                    switch selection {
+                    case .overview, nil:
+                        ProjectHomeView(project: project, navigate: { selection = $0 }, newFeature: { showNewFeature = true })
+                    case .pullRequests:
+                        PullRequestsView(project: project) { selection = .feature($0) }
+                    case .worklog:
+                        WorklogView(project: project)
+                    case .feature(let id):
+                        FeatureView(id: id)
+                    }
+                }
+                AgentToastOverlay { featureID in
+                    selection = .feature(featureID)
+                }
             }
+            .animation(.spring(duration: 0.38, bounce: 0.2), value: store.activeToast)
         }
         .sheet(isPresented: $showNewFeature) {
             NewFeatureView(project: project) { selection = .feature($0) }

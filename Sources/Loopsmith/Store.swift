@@ -1,5 +1,17 @@
+import AppKit
 import Foundation
 import Observation
+@preconcurrency import UserNotifications
+
+struct AgentToast: Identifiable, Equatable {
+    var id = UUID()
+    var role: Role?
+    var provider: AgentProvider?
+    var title: String
+    var subtitle: String
+    var featureID: UUID?
+    var isError: Bool = false
+}
 
 struct Settings: Codable, Equatable {
     var worktreesRoot = NSHomeDirectory() + "/Loopsmith"
@@ -15,6 +27,8 @@ struct Settings: Codable, Equatable {
     var antigravityPermissionMode = "auto"
     /// Stop after each step until the developer approves it.
     var approveEachStep = true
+    /// Desktop & in-app visual notifications when agents start, finish, or need approval.
+    var notificationsEnabled = true
     /// Dev rounds allowed after each review and each QA before the leftovers become open points.
     var maxFixRounds = 2
     /// Untracked files copied from the repository into each new worktree.
@@ -46,6 +60,7 @@ struct Settings: Codable, Equatable {
         permissionMode = try c.decodeIfPresent(String.self, forKey: .permissionMode) ?? d.permissionMode
         antigravityPermissionMode = try c.decodeIfPresent(String.self, forKey: .antigravityPermissionMode) ?? d.antigravityPermissionMode
         approveEachStep = try c.decodeIfPresent(Bool.self, forKey: .approveEachStep) ?? d.approveEachStep
+        notificationsEnabled = try c.decodeIfPresent(Bool.self, forKey: .notificationsEnabled) ?? d.notificationsEnabled
         maxFixRounds = try c.decodeIfPresent(Int.self, forKey: .maxFixRounds) ?? d.maxFixRounds
         copyFiles = try c.decodeIfPresent(String.self, forKey: .copyFiles) ?? d.copyFiles
         jiraSite = try c.decodeIfPresent(String.self, forKey: .jiraSite) ?? d.jiraSite
@@ -67,9 +82,14 @@ final class AppStore {
     var jiraToken: String
     var issues: [JiraIssue] = []
     var inventories: [String: ToolInventory] = [:]
+    var cliStatuses: [AgentProvider: (installed: Bool, detail: String)] = [:]
+    var cachedAntigravityModels: [String]?
+    var activeToast: AgentToast?
 
     @ObservationIgnored var tasks: [UUID: Task<Void, Never>] = [:]
     @ObservationIgnored var processes: [UUID: [Process]] = [:]
+    @ObservationIgnored private var toastDismissTask: Task<Void, Never>?
+    @ObservationIgnored private var debouncedSaveTask: Task<Void, Never>?
 
     /// `LOOPSMITH_HOME` keeps a separate set of features and settings (the end-to-end test uses it).
     static let folder = ProcessInfo.processInfo.environment["LOOPSMITH_HOME"].map { URL(fileURLWithPath: $0, isDirectory: true) }
@@ -149,8 +169,18 @@ final class AppStore {
     }
 
     func save() {
+        debouncedSaveTask?.cancel()
         if let data = try? JSONEncoder().encode(features) { Self.writeSecure(data, to: featuresFile) }
         if let data = try? JSONEncoder().encode(projects) { Self.writeSecure(data, to: projectsFile) }
+    }
+
+    /// Coalesces rapid edits (such as typing in a TextField or TextEditor) so JSON encoding does not run on every keystroke.
+    func scheduleSave() {
+        debouncedSaveTask?.cancel()
+        debouncedSaveTask = Task {
+            try? await Task.sleep(for: .milliseconds(350))
+            if !Task.isCancelled { save() }
+        }
     }
 
     func saveSettings() {
@@ -280,5 +310,36 @@ final class AppStore {
             parts.append("### Open points\n" + f.unresolved.map(\.asText).joined(separator: "\n"))
         }
         return parts.joined(separator: "\n\n")
+    }
+
+    /// Shows an animated in-app toast with the agent character and optionally posts a native macOS notification.
+    func notify(role: Role? = nil, provider: AgentProvider? = nil, title: String, subtitle: String,
+                featureID: UUID? = nil, isError: Bool = false, systemNotification: Bool = false) {
+        guard settings.notificationsEnabled else { return }
+        let toast = AgentToast(role: role, provider: provider, title: title, subtitle: subtitle,
+                               featureID: featureID, isError: isError)
+        activeToast = toast
+        toastDismissTask?.cancel()
+        toastDismissTask = Task {
+            try? await Task.sleep(for: .seconds(4.8))
+            if !Task.isCancelled, activeToast?.id == toast.id {
+                activeToast = nil
+            }
+        }
+
+        guard systemNotification,
+              ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil,
+              Bundle.main.bundleIdentifier != nil else { return }
+
+        let toastID = toast.id.uuidString
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, _ in
+            guard granted else { return }
+            let content = UNMutableNotificationContent()
+            content.title = title
+            content.body = subtitle
+            content.sound = .default
+            let req = UNNotificationRequest(identifier: toastID, content: content, trigger: nil)
+            UNUserNotificationCenter.current().add(req)
+        }
     }
 }

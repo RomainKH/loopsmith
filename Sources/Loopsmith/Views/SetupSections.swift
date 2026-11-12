@@ -77,14 +77,26 @@ struct AgentsSetupSections: View {
                 .foregroundStyle(.secondary)
         }
         .task {
-            async let claude = Agent.cliStatus(.claude)
-            async let gemini = Agent.cliStatus(.gemini)
-            async let antigravity = Agent.cliStatus(.antigravity)
-            async let models = Agent.antigravityModels()
-            claudeStatus = await claude
-            geminiStatus = await gemini
-            antigravityStatus = await antigravity
-            antigravityModels = await models
+            if let c = store.cliStatuses[.claude] { claudeStatus = c }
+            if let g = store.cliStatuses[.gemini] { geminiStatus = g }
+            if let a = store.cliStatuses[.antigravity] { antigravityStatus = a }
+            if let m = store.cachedAntigravityModels { antigravityModels = m }
+
+            if store.cliStatuses.isEmpty {
+                async let claude = Agent.cliStatus(.claude)
+                async let gemini = Agent.cliStatus(.gemini)
+                async let antigravity = Agent.cliStatus(.antigravity)
+                async let models = Agent.antigravityModels()
+                let (c, g, a, m) = await (claude, gemini, antigravity, models)
+                claudeStatus = c
+                geminiStatus = g
+                antigravityStatus = a
+                antigravityModels = m
+                store.cliStatuses[.claude] = c
+                store.cliStatuses[.gemini] = g
+                store.cliStatuses[.antigravity] = a
+                store.cachedAntigravityModels = m
+            }
         }
     }
 }

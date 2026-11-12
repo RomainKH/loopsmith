@@ -59,6 +59,33 @@ enum Role: String, Codable, CaseIterable {
         case .qa: "checkmark.shield.fill"
         }
     }
+
+    var personaName: String {
+        switch self {
+        case .analysis: "Nova"
+        case .dev: "Atlas"
+        case .review: "Orion"
+        case .qa: "Aegis"
+        }
+    }
+
+    var personaTitle: String {
+        switch self {
+        case .analysis: "Architect & Scout"
+        case .dev: "Forge Builder"
+        case .review: "Code Inspector"
+        case .qa: "QA Sentinel"
+        }
+    }
+
+    var actionVerb: String {
+        switch self {
+        case .analysis: "Scanning codebase & blueprint…"
+        case .dev: "Forging implementation…"
+        case .review: "Inspecting diff & edge cases…"
+        case .qa: "Running quality gates & tests…"
+        }
+    }
 }
 
 /// AI CLI connector backing an agent role: `claude -p`, `gemini -p` or the Antigravity CLI `agy --print`.
@@ -226,6 +253,8 @@ struct Project: Codable, Identifiable {
 }
 
 struct AgentRun: Codable, Identifiable {
+    static let maxLogLines = 600
+
     var id = UUID()
     var role: Role
     var lens: String
@@ -238,13 +267,60 @@ struct AgentRun: Codable, Identifiable {
     var summary: String?
     var findings: [Finding]?
     var cost: Double?
+    var tokens: Int?
     var error: String?
+
+    /// Cached O(1) counters so SwiftUI views never scan `log` on render.
+    var loggedChars: Int?
+    var loggedTools: Int?
+    var lastActivityLine: String?
 
     var provider: AgentProvider { AgentProvider.detect(from: model) }
 
+    /// Duration in seconds (live while running).
+    var durationSeconds: Int {
+        max(Int((endedAt ?? Date()).timeIntervalSince(startedAt)), 0)
+    }
+
+    /// Number of tool invocations logged (`→ ...`) in O(1).
+    var toolCallsCount: Int {
+        if let loggedTools { return loggedTools }
+        return log.reduce(0) { $0 + ($1.hasPrefix("→ ") ? 1 : 0) }
+    }
+
+    /// Latest tool invocation or log line for live speech bubbles in O(1).
+    var latestActivity: String? {
+        if let lastActivityLine { return lastActivityLine }
+        return log.last { !$0.trimmed.isEmpty }
+    }
+
+    /// Reported token count from the CLI, or a conservative O(1) estimate from the streamed transcript.
+    var effectiveTokens: Int {
+        if let tokens, tokens > 0 { return tokens }
+        let chars = (loggedChars ?? log.reduce(0) { $0 + $1.count }) + (summary?.count ?? 0)
+        guard chars > 0 else { return status == .running ? 180 : 0 }
+        return max(chars / 4, 120)
+    }
+
+    var hasExactTokens: Bool {
+        (tokens ?? 0) > 0
+    }
+
     mutating func append(log line: String) {
-        log.append(line)
-        if log.count > 3000 { log.removeFirst(log.count - 3000) }
+        recordLog(line, continuing: false)
+    }
+
+    mutating func recordLog(_ text: String, continuing: Bool) {
+        if loggedChars == nil { loggedChars = log.reduce(0) { $0 + $1.count } }
+        if loggedTools == nil { loggedTools = log.reduce(0) { $0 + ($1.hasPrefix("→ ") ? 1 : 0) } }
+        loggedChars = (loggedChars ?? 0) + text.count
+        if !continuing && text.hasPrefix("→ ") {
+            loggedTools = (loggedTools ?? 0) + 1
+        }
+        log.appendLog(text, continuing: continuing)
+        if let last = log.last, !last.trimmed.isEmpty {
+            lastActivityLine = last
+        }
     }
 }
 

@@ -21,6 +21,10 @@ struct FeatureView: View {
                         header(f)
                         PhaseStrip(feature: f)
 
+                        if f.running {
+                            ActiveAgentStageBanner(feature: f)
+                        }
+
                         if let message = f.error ?? actionError {
                             ForgeCard(padding: 14, cornerRadius: 11, tint: Brand.crimson) {
                                 HStack(spacing: 10) {
@@ -247,12 +251,12 @@ struct PhaseStrip: View {
     let feature: Feature
 
     var body: some View {
-        let steps: [(title: String, icon: String, sub: String)] = [
-            ("Analysis", "magnifyingglass", feature.analysis.map { $0.feasibility.capitalized } ?? "Spec & risks"),
-            ("Dev", "hammer.fill", "Implementation"),
-            ("Review", "eye.fill", feature.reviewFixes > 0 ? "\(feature.reviewFixes) fix round(s)" : "3 lenses"),
-            ("QA", "checkmark.shield.fill", feature.qaFixes > 0 ? "\(feature.qaFixes) fix round(s)" : "Build & tests"),
-            ("Pull Request", "arrow.triangle.pull", feature.phase == .prOpened ? "Opened" : "Ship")
+        let steps: [(title: String, role: Role?, icon: String, sub: String)] = [
+            ("Analysis · Nova", .analysis, "magnifyingglass", feature.analysis.map { $0.feasibility.capitalized } ?? "Spec & risks"),
+            ("Dev · Atlas", .dev, "hammer.fill", "Implementation"),
+            ("Review · Orion", .review, "eye.fill", feature.reviewFixes > 0 ? "\(feature.reviewFixes) fix round(s)" : "2 lenses"),
+            ("QA · Aegis", .qa, "checkmark.shield.fill", feature.qaFixes > 0 ? "\(feature.qaFixes) fix round(s)" : "Build & tests"),
+            ("Pull Request", nil, "arrow.triangle.pull", feature.phase == .prOpened ? "Opened" : "Ship")
         ]
 
         ForgeCard(padding: 16, cornerRadius: 13) {
@@ -260,30 +264,38 @@ struct PhaseStrip: View {
                 ForEach(steps.indices, id: \.self) { i in
                     let done = i < feature.phase.step
                     let current = i == feature.phase.step
-                    let stepTint: Color = done ? Brand.emerald : current ? Brand.amber : .secondary
+                    let stepTint: Color = done ? Brand.emerald : current ? (steps[i].role.map(Brand.roleColor) ?? Brand.cobalt) : .secondary
 
                     VStack(spacing: 6) {
-                        ZStack {
-                            Circle()
-                                .fill(done ? Brand.emerald.opacity(0.18) : current ? Brand.amber.opacity(0.20) : Color.secondary.opacity(0.10))
-                                .frame(width: 34, height: 34)
-                            if current {
-                                Circle()
-                                    .strokeBorder(Brand.amber.opacity(0.55), lineWidth: 1.5)
-                                    .frame(width: 34, height: 34)
+                        if let role = steps[i].role {
+                            ZStack(alignment: .bottomTrailing) {
+                                AgentCharacterAvatar(role: role, isWorking: false, size: 44)
+                                    .opacity(done || current ? 1.0 : 0.55)
+                                if done {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .font(.system(size: 13, weight: .bold))
+                                        .foregroundStyle(Brand.emerald)
+                                        .background(Circle().fill(Brand.obsidian))
+                                }
                             }
-                            Image(systemName: done ? "checkmark" : steps[i].icon)
-                                .font(.system(size: 13, weight: .bold))
-                                .foregroundStyle(stepTint)
+                        } else {
+                            ZStack {
+                                Circle()
+                                    .fill(done ? Brand.emerald.opacity(0.18) : current ? Brand.cobalt.opacity(0.20) : Color.secondary.opacity(0.10))
+                                    .frame(width: 44, height: 44)
+                                Image(systemName: done ? "checkmark" : steps[i].icon)
+                                    .font(.system(size: 15, weight: .bold))
+                                    .foregroundStyle(stepTint)
+                            }
                         }
 
                         Text(steps[i].title)
-                            .font(.system(size: 12.5, weight: current ? .bold : .semibold))
+                            .font(.system(size: 12, weight: current ? .bold : .semibold))
                             .foregroundStyle(current || done ? .primary : .secondary)
 
                         Text(current ? feature.phase.label : steps[i].sub)
                             .font(.system(size: 10.5, weight: .medium))
-                            .foregroundStyle(current ? Brand.amber : .secondary)
+                            .foregroundStyle(current ? stepTint : .secondary)
                             .lineLimit(1)
                     }
                     .frame(maxWidth: .infinity)
@@ -292,8 +304,8 @@ struct PhaseStrip: View {
                         Capsule()
                             .fill(done ? Brand.emerald.opacity(0.65) : Color.primary.opacity(0.10))
                             .frame(height: 2.5)
-                            .frame(maxWidth: 64)
-                            .padding(.bottom, 22)
+                            .frame(maxWidth: 56)
+                            .padding(.bottom, 24)
                     }
                 }
             }
@@ -313,61 +325,69 @@ struct RunView: View {
     var body: some View {
         ForgeCard(padding: 14, cornerRadius: 12, tint: run.status == .running ? Brand.indigo : nil) {
             DisclosureGroup(isExpanded: $expanded) {
-                VStack(alignment: .leading, spacing: 12) {
-                    Divider().opacity(0.5)
+                if expanded {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Divider().opacity(0.5)
 
-                    if let error = run.error {
-                        Label(error, systemImage: "xmark.octagon.fill")
-                            .foregroundStyle(Brand.crimson)
-                            .textSelection(.enabled)
-                    }
-                    if let summary = run.summary, run.role == .dev || run.findings != nil {
-                        Text((try? AttributedString(markdown: summary, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(summary))
-                            .font(.callout)
-                            .textSelection(.enabled)
-                            .padding(10)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    }
-                    if let findings = run.findings {
-                        if findings.isEmpty {
-                            Label("No blocking or major finding reported.", systemImage: "checkmark.seal.fill")
-                                .font(.callout)
-                                .foregroundStyle(Brand.emerald)
-                        } else {
-                            FindingsList(findings: findings)
-                        }
-                    }
-
-                    ForgeTerminalBox(
-                        title: "\(run.provider.label) · \(AgentProvider.cliModel(run.model))",
-                        trailingText: "\(run.log.count) lines",
-                        statusColor: color
-                    ) {
-                        ScrollView {
-                            Text(run.log.suffix(400).joined(separator: "\n"))
-                                .font(.system(size: 11.5, design: .monospaced))
+                        if let error = run.error {
+                            Label(error, systemImage: "xmark.octagon.fill")
+                                .foregroundStyle(Brand.crimson)
                                 .textSelection(.enabled)
-                                .frame(maxWidth: .infinity, alignment: .leading)
                         }
-                        .defaultScrollAnchor(.bottom)
-                        .frame(height: 220)
+                        if let summary = run.summary, run.role == .dev || run.findings != nil {
+                            Text((try? AttributedString(markdown: summary, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(summary))
+                                .font(.callout)
+                                .textSelection(.enabled)
+                                .padding(10)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        }
+                        if let findings = run.findings {
+                            if findings.isEmpty {
+                                Label("No blocking or major finding reported.", systemImage: "checkmark.seal.fill")
+                                    .font(.callout)
+                                    .foregroundStyle(Brand.emerald)
+                            } else {
+                                FindingsList(findings: findings)
+                            }
+                        }
+
+                        ForgeTerminalBox(
+                            title: "\(run.provider.label) · \(AgentProvider.cliModel(run.model))",
+                            trailingText: "\(run.log.count) lines",
+                            statusColor: color
+                        ) {
+                            ScrollView {
+                                Text(run.log.suffix(120).joined(separator: "\n"))
+                                    .font(.system(size: 11.5, design: .monospaced))
+                                    .textSelection(.enabled)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .defaultScrollAnchor(.bottom)
+                            .frame(height: 200)
+                        }
                     }
+                    .padding(.top, 8)
                 }
-                .padding(.top, 8)
             } label: {
                 HStack(spacing: 10) {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 7, style: .continuous)
-                            .fill(color.opacity(0.16))
-                            .frame(width: 28, height: 28)
-                        Image(systemName: icon)
-                            .font(.system(size: 12, weight: .bold))
-                            .foregroundStyle(color)
-                    }
+                    AgentCharacterAvatar(role: run.role, isWorking: false, size: 38)
 
-                    Text(title)
-                        .font(.headline)
+                    VStack(alignment: .leading, spacing: 1) {
+                        HStack(spacing: 6) {
+                            Text(title)
+                                .font(.headline)
+                            Text("· \(run.role.personaName)")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(Brand.roleColor(run.role))
+                        }
+                        if let latest = run.latestActivity, run.status == .running {
+                            Text(latest)
+                                .font(.system(size: 10.5, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                    }
 
                     ProviderBadge(model: run.model, compact: true)
 
@@ -375,6 +395,14 @@ struct RunView: View {
 
                     if run.status == .running {
                         ProgressView().controlSize(.small)
+                    }
+                    ForgeCodeChip(
+                        text: "\(run.hasExactTokens ? "" : "~")\(Brand.formatTokens(run.effectiveTokens)) tok",
+                        icon: "cpu",
+                        tint: Brand.cyan
+                    )
+                    if run.toolCallsCount > 0 {
+                        ForgeCodeChip(text: "\(run.toolCallsCount) tools", icon: "wrench.and.screwdriver", tint: Brand.indigo)
                     }
                     if let cost = run.cost {
                         ForgeCodeChip(text: String(format: "$%.2f", cost), tint: .secondary)

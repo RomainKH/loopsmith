@@ -5,6 +5,7 @@ struct AgentResult: Equatable {
     var text: String
     var structured: Data?
     var cost: Double?
+    var tokens: Int? = nil
     var isError: Bool
 }
 
@@ -46,7 +47,7 @@ extension Array where Element == String {
             self[count - 1] += text
         } else {
             append(text)
-            if count > 3000 { removeFirst(count - 3000) }
+            if count > AgentRun.maxLogLines { removeFirst(count - AgentRun.maxLogLines) }
         }
     }
 }
@@ -255,10 +256,31 @@ enum Agent {
                                         text: text,
                                         structured: structured,
                                         cost: obj["total_cost_usd"] as? Double,
+                                        tokens: extractTokens(from: obj),
                                         isError: isError))]
         default:
             return []
         }
+    }
+
+    /// Extracts total token usage from Claude Code (`usage`), Gemini CLI (`stats`), or Antigravity CLI (`usage`/`tokens`).
+    private static func extractTokens(from obj: [String: Any]) -> Int? {
+        if let usage = obj["usage"] as? [String: Any] {
+            if let total = usage["total_tokens"] as? Int, total > 0 { return total }
+            let input = (usage["input_tokens"] as? Int ?? 0)
+                + (usage["cache_read_input_tokens"] as? Int ?? 0)
+                + (usage["cache_creation_input_tokens"] as? Int ?? 0)
+            let output = usage["output_tokens"] as? Int ?? 0
+            if input + output > 0 { return input + output }
+        }
+        if let stats = obj["stats"] as? [String: Any] {
+            if let total = stats["total_tokens"] as? Int, total > 0 { return total }
+            let input = stats["input_tokens"] as? Int ?? 0
+            let output = stats["output_tokens"] as? Int ?? 0
+            if input + output > 0 { return input + output }
+        }
+        if let total = obj["total_tokens"] as? Int, total > 0 { return total }
+        return nil
     }
 
     /// Antigravity CLI (`agy` 1.5): `event` lines, the answer in `text_delta` pieces, tools as step updates,
@@ -292,7 +314,8 @@ enum Agent {
             }
             let text = isError ? ((r["error"] as? String)?.nonEmpty ?? "agy failed") : (r["response"] as? String ?? "")
             return [.result(AgentResult(sessionId: (r["conversation_id"] as? String)?.nonEmpty, text: text,
-                                        structured: structured, cost: nil, isError: isError))]
+                                        structured: structured, cost: r["total_cost_usd"] as? Double,
+                                        tokens: extractTokens(from: r), isError: isError))]
         default:
             return []
         }

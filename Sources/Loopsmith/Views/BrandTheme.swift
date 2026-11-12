@@ -269,32 +269,25 @@ struct ForgeCodeChip: View {
     }
 }
 
-/// Atmospheric background canvas for the "Icy Steel & Cobalt" Art Direction.
+/// Atmospheric background canvas for the "Icy Steel & Cobalt" Art Direction (single-pass GPU gradient).
 struct ForgeCanvasBackground: View {
     var accent: Color = Brand.cobalt
 
     var body: some View {
-        ZStack {
-            Color(nsColor: .windowBackgroundColor)
-            Brand.obsidian.opacity(0.18)
-            RadialGradient(
-                colors: [accent.opacity(0.08), Brand.indigo.opacity(0.035), .clear],
-                center: .topLeading,
-                startRadius: 20,
-                endRadius: 640
-            )
-            RadialGradient(
-                colors: [Brand.steel.opacity(0.05), Brand.cyan.opacity(0.02), .clear],
-                center: .topTrailing,
-                startRadius: 40,
-                endRadius: 540
-            )
-        }
+        LinearGradient(
+            colors: [
+                accent.opacity(0.06),
+                Brand.obsidian.opacity(0.14),
+                Color(nsColor: .windowBackgroundColor)
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
         .ignoresSafeArea()
     }
 }
 
-/// Elevated architectural surface card with cool titanium sheen and specular 1px border.
+/// Elevated architectural surface card with cool titanium sheen and specular 1px border (zero offscreen shadow pass).
 struct ForgeCard<Content: View>: View {
     var padding: CGFloat = 16
     var cornerRadius: CGFloat = 12
@@ -302,53 +295,20 @@ struct ForgeCard<Content: View>: View {
     @ViewBuilder var content: () -> Content
 
     var body: some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
         content()
             .padding(padding)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background {
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            .background(
+                shape
                     .fill(.background.secondary)
-                    .overlay {
-                        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                            .fill(Brand.slate.opacity(0.22))
-                    }
-                    .overlay {
-                        if let tint {
-                            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                                .fill(
-                                    LinearGradient(
-                                        colors: [tint.opacity(0.10), tint.opacity(0.025), .clear],
-                                        startPoint: .topLeading,
-                                        endPoint: .bottomTrailing
-                                    )
-                                )
-                        } else {
-                            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                                .fill(
-                                    LinearGradient(
-                                        colors: [Brand.steel.opacity(0.045), .clear],
-                                        startPoint: .top,
-                                        endPoint: .bottom
-                                    )
-                                )
-                        }
-                    }
-            }
-            .overlay {
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .strokeBorder(
-                        LinearGradient(
-                            colors: [
-                                (tint ?? Brand.steel).opacity(tint != nil ? 0.42 : 0.16),
-                                (tint ?? Brand.titanium).opacity(tint != nil ? 0.15 : 0.06)
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        lineWidth: 1
+                    .overlay(
+                        shape.fill((tint ?? Brand.slate).opacity(tint != nil ? 0.07 : 0.20))
                     )
-            }
-            .shadow(color: .black.opacity(0.10), radius: 10, y: 3)
+            )
+            .overlay(
+                shape.strokeBorder((tint ?? Brand.steel).opacity(tint != nil ? 0.34 : 0.12), lineWidth: 1)
+            )
     }
 }
 

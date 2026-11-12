@@ -65,7 +65,7 @@ import Testing
         #expect(Agent.parse(lines[0]) == [.session("0b6f8a39-2c1e-4c55-9a43-8f1f6d7e2a10")])
         #expect(log == ["Let me look at the diff.", "→ run_shell_command git diff abc", #"{"summary":"Looks good","findings":[]}"#])
         let done = try #require(result)
-        #expect(!done.isError && done.text.isEmpty)
+        #expect(!done.isError && done.text.isEmpty && done.tokens == 10)
         let verdict = try JSONDecoder().decode(Verdict.self, from: try #require(Agent.extractStructuredJSON(from: reply.text)))
         #expect(verdict.summary == "Looks good")
     }

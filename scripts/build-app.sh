@@ -6,10 +6,10 @@ cd "$(dirname "$0")/.."
 VERSION="0.1.0"
 APP="build/Loopsmith.app"
 
-swift build -c release
+swift build -c release --disable-sandbox
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp "$(swift build -c release --show-bin-path)/Loopsmith" "$APP/Contents/MacOS/Loopsmith"
+cp "$(swift build -c release --disable-sandbox --show-bin-path)/Loopsmith" "$APP/Contents/MacOS/Loopsmith"
 if [[ -f "brand/AppIcon.icns" ]]; then
   cp "brand/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 fi
@@ -40,5 +40,6 @@ echo "Built $APP"
 if [[ "${1:-}" == "--install" ]]; then
   rm -rf "/Applications/Loopsmith.app"
   cp -R "$APP" /Applications/
-  echo "Installed /Applications/Loopsmith.app"
+  rm -rf build
+  echo "Installed /Applications/Loopsmith.app (and cleaned up build/)"
 fi

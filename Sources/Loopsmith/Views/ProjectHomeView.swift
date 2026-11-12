@@ -26,6 +26,7 @@ struct ProjectHomeView: View {
                 VStack(alignment: .leading, spacing: 20) {
                     header
                     if features.isEmpty { firstFeature } else { cards }
+                    ProjectAgentTelemetryCard(project: project)
                     settingsBox
                     briefBox
                 }
@@ -274,7 +275,7 @@ struct ProjectHomeView: View {
                             .font(.callout)
                             .foregroundStyle(.secondary)
                         TextField("APP, WEB", text: Binding(get: { project.jiraKeys ?? "" },
-                                                             set: { v in store.updateProject(project.id) { $0.jiraKeys = v }; store.save() }))
+                                                             set: { v in store.updateProject(project.id) { $0.jiraKeys = v }; store.scheduleSave() }))
                             .textFieldStyle(.roundedBorder)
                             .font(.callout.monospaced())
                             .frame(maxWidth: 240)
@@ -378,7 +379,7 @@ struct ProjectHomeView: View {
             }
         }
         TextEditor(text: Binding(get: { project.brief ?? "" },
-                                 set: { text in store.updateProject(project.id) { $0.brief = text }; store.save() }))
+                                 set: { text in store.updateProject(project.id) { $0.brief = text }; store.scheduleSave() }))
             .font(.system(size: 12.5, design: .monospaced))
             .scrollContentBackground(.hidden)
             .padding(10)
@@ -415,6 +416,6 @@ struct ProjectHomeView: View {
 
     private func binding<T>(_ path: WritableKeyPath<Project, T>) -> Binding<T> {
         Binding(get: { (store.project(project.id) ?? project)[keyPath: path] },
-                set: { value in store.updateProject(project.id) { $0[keyPath: path] = value }; store.save() })
+                set: { value in store.updateProject(project.id) { $0[keyPath: path] = value }; store.scheduleSave() })
     }
 }

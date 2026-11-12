@@ -41,7 +41,9 @@ struct SettingsView: View {
                     TextField("Copy into new worktrees", text: $store.settings.copyFiles, prompt: Text(".env, .env.local"))
                 }
 
-                Section("Pipeline & Worklog") {
+                Section("Pipeline, Notifications & Worklog") {
+                    Toggle("Visual & macOS notifications when agents start or wait for approval",
+                           isOn: $store.settings.notificationsEnabled)
                     Stepper("Fix rounds after review and after QA: \(store.settings.maxFixRounds)",
                             value: $store.settings.maxFixRounds, in: 0...5)
                     Stepper("Daily target: \(store.settings.dailyHours.formatted())h",
