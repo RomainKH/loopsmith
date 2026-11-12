@@ -152,10 +152,14 @@ struct EndpointsSetupSection: View {
                         }
                     }
                     Spacer()
-                    Toggle("MCP", isOn: $e.loadMCPServers)
-                        .toggleStyle(.switch)
-                        .controlSize(.mini)
-                        .help("Give these agents your MCP servers. Off by default: their tool definitions can take more context than a local model has.")
+                    HStack(spacing: 5) {
+                        Text("MCP").font(.caption).foregroundStyle(.secondary)
+                        Toggle("MCP servers", isOn: $e.loadMCPServers)
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                            .controlSize(.mini)
+                    }
+                    .help("Give these agents your MCP servers. Off by default: their tool definitions can take more context than a local model has.")
                     if testing.contains(e.id) { ProgressView().controlSize(.small) }
                     Button("Test") { test(e) }
                         .disabled(testing.contains(e.id))
@@ -388,7 +392,7 @@ private struct RoleModelRow: View {
                     }
                 }
                 .labelsHidden()
-                .frame(width: 105)
+                .frame(width: 140)
 
                 // The field shows the CLI's own model name; Antigravity's prefix is added back on input.
                 TextField("Model ID", text: Binding(get: { AgentProvider.cliModel(model) },

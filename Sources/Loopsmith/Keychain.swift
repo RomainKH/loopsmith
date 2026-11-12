@@ -4,12 +4,36 @@ import Security
 #endif
 
 /// Secrets (the Jira API token, custom API keys) never go into the settings file.
-/// macOS keeps them in the login keychain; elsewhere they live in `secrets.json`, readable by the user only.
+/// macOS keeps them in the login keychain; elsewhere, and for a separate `LOOPSMITH_HOME` (tests, demos), they live in
+/// `secrets.json` next to the settings, readable by the user only.
 enum Keychain {
     private static let service = "Loopsmith"
+    private static let usesFile: Bool = {
+        #if canImport(Security)
+        return ProcessInfo.processInfo.environment["LOOPSMITH_HOME"] != nil
+        #else
+        return true
+        #endif
+    }()
+
+    static func get(_ account: String) -> String {
+        if usesFile { return fileGet(account) }
+        #if canImport(Security)
+        return keychainGet(account)
+        #else
+        return ""
+        #endif
+    }
+
+    static func set(_ value: String, for account: String) {
+        if usesFile { return fileSet(value, for: account) }
+        #if canImport(Security)
+        keychainSet(value, for: account)
+        #endif
+    }
 
     #if canImport(Security)
-    static func get(_ account: String) -> String {
+    private static func keychainGet(_ account: String) -> String {
         let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
                                     kSecAttrService as String: service,
                                     kSecAttrAccount as String: account,
@@ -20,7 +44,7 @@ enum Keychain {
         return String(decoding: data, as: UTF8.self)
     }
 
-    static func set(_ value: String, for account: String) {
+    private static func keychainSet(_ value: String, for account: String) {
         let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
                                     kSecAttrService as String: service,
                                     kSecAttrAccount as String: account]
@@ -31,7 +55,8 @@ enum Keychain {
         add[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
         SecItemAdd(add as CFDictionary, nil)
     }
-    #else
+    #endif
+
     private static var file: URL { AppStore.folder.appendingPathComponent("secrets.json") }
     private static let lock = NSLock()
 
@@ -40,12 +65,12 @@ enum Keychain {
         return (try? JSONDecoder().decode([String: String].self, from: data)) ?? [:]
     }
 
-    static func get(_ account: String) -> String {
+    private static func fileGet(_ account: String) -> String {
         lock.lock(); defer { lock.unlock() }
         return readAll()[account] ?? ""
     }
 
-    static func set(_ value: String, for account: String) {
+    private static func fileSet(_ value: String, for account: String) {
         lock.lock(); defer { lock.unlock() }
         var all = readAll()
         all[account] = value.isEmpty ? nil : value
@@ -59,5 +84,4 @@ enum Keychain {
         try? data.write(to: file)
         try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
     }
-    #endif
 }

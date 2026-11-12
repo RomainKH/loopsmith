@@ -23,6 +23,8 @@ after every step, the pipeline stops until you approve it
 Everything is organised by project, a git repository on your machine: its overview (what waits for you, what runs,
 open pull requests, today's time), its pull requests, its Jira worklog, and its features in progress or shipped.
 
+![A project's overview: what waits for your approval, the agents' work and token usage](docs/screenshots/overview.png)
+
 ## Install
 
 ```bash
@@ -55,6 +57,8 @@ Then you need, on your `PATH`:
 Jira if you want it, and GitHub. An agent writes the project's brief. Then **New feature** (⌘N), and approve each
 step from the feature page.
 
+![A feature waiting for your approval after the review: untick what is not a real problem, then send the rest to the dev agent](docs/screenshots/feature.png)
+
 **Terminal (macOS, Linux, WSL).**
 
 ```bash
@@ -85,6 +89,8 @@ loopsmith config models api:ollama/qwen3-coder   # every role; or analysisModel,
 
 In the app: Settings → Agents & AI → Custom APIs & Local Models → **Add a custom API**, then pick **Custom API** for
 a role. Adding an endpoint tests it and lists its models (`GET /v1/models`).
+
+<img src="docs/screenshots/agents.png" alt="Settings: the agent CLIs, an Ollama endpoint, and a model per role mixing Claude Code, Antigravity and Ollama" width="560">
 
 - A role's model is written `api:<endpoint>/<model>`, so you can mix them: a local model for QA, Claude for dev.
 - For each run Loopsmith sets `ANTHROPIC_BASE_URL`, puts the endpoint's key (or a placeholder for a local server) in
@@ -193,6 +199,9 @@ swift test                                                   # unit tests
 LOOPSMITH_E2E=1 LOOPSMITH_HOME=$(mktemp -d) swift test --filter EndToEnd
 LOOPSMITH_E2E=1 LOOPSMITH_E2E_MODEL=agy:gemini-3.8-flash-low LOOPSMITH_HOME=$(mktemp -d) swift test --filter EndToEnd
 ```
+
+The README screenshots are rendered from the real views on a made-up project, so they can be redone after a UI
+change: `LOOPSMITH_HOME=$(mktemp -d) LOOPSMITH_SCREENSHOTS=docs/screenshots swift test --filter Screenshots`.
 
 The end-to-end test runs the whole flow (project brief, analysis, dev, review, QA) with Claude Haiku on a throwaway repository (a few minutes, a few cents).
 `LOOPSMITH_HOME` keeps its features and settings away from yours.

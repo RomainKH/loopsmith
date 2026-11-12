@@ -26,9 +26,14 @@ struct ContentView: View {
 struct ProjectWorkspace: View {
     @Environment(AppStore.self) private var store
     let project: Project
-    @State private var selection: ProjectSection? = .overview
+    @State private var selection: ProjectSection?
     @State private var showNewFeature = false
     @State private var addError: String?
+
+    init(project: Project, selection: ProjectSection? = .overview) {
+        self.project = project
+        _selection = State(initialValue: selection)
+    }
 
     private var features: [Feature] { store.features(of: project) }
     private var inProgress: [Feature] { features.filter { $0.phase != .prOpened } }
