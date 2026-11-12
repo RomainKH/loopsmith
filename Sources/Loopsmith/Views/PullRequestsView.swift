@@ -17,7 +17,7 @@ struct PullRequestsView: View {
                 if pr.isDraft { Text("Draft").font(.caption).foregroundStyle(.secondary) }
             }
             .contentShape(Rectangle())
-            .onTapGesture { if let url = URL(string: pr.url) { openURL(url) } }
+            .onTapGesture { if let url = GitHub.safeHTTPSURL(pr.url) { openURL(url) } }
             .help(pr.url)
         }
         .overlay {

@@ -30,7 +30,120 @@ enum Phase: String, Codable {
     }
 }
 
-enum Role: String, Codable { case analysis, dev, review, qa }
+enum Role: String, Codable, CaseIterable {
+    case analysis, dev, review, qa
+
+    var title: String {
+        switch self {
+        case .analysis: "Analysis & Brief"
+        case .dev: "Development"
+        case .review: "Code Review"
+        case .qa: "Quality Assurance"
+        }
+    }
+
+    var shortTitle: String {
+        switch self {
+        case .analysis: "Analysis"
+        case .dev: "Dev"
+        case .review: "Review"
+        case .qa: "QA"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .analysis: "magnifyingglass.circle.fill"
+        case .dev: "hammer.fill"
+        case .review: "eye.fill"
+        case .qa: "checkmark.shield.fill"
+        }
+    }
+}
+
+/// AI CLI connector backing an agent role: `claude -p`, `gemini -p` or the Antigravity CLI `agy --print`.
+/// The model string says which: `gemini-*` runs on Gemini CLI, `agy:<model>` on Antigravity (which also serves
+/// Claude models, hence the prefix), anything else on Claude Code.
+enum AgentProvider: String, Codable, CaseIterable, Identifiable {
+    case claude
+    case gemini
+    case antigravity
+
+    static let antigravityPrefix = "agy:"
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .claude: "Claude Code"
+        case .gemini: "Gemini CLI"
+        case .antigravity: "Antigravity CLI"
+        }
+    }
+
+    var shortLabel: String {
+        switch self {
+        case .claude: "Claude"
+        case .gemini: "Gemini"
+        case .antigravity: "Antigravity"
+        }
+    }
+
+    var binary: String {
+        switch self {
+        case .claude: "claude"
+        case .gemini: "gemini"
+        case .antigravity: "agy"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .claude: "bolt.horizontal.fill"
+        case .gemini: "sparkles"
+        case .antigravity: "arrow.up.right.circle.fill"
+        }
+    }
+
+    var defaultModel: String {
+        switch self {
+        case .claude: "claude-opus-5-5"
+        case .gemini: "gemini-2.5-pro"
+        case .antigravity: "agy:gemini-4-argon-medium"
+        }
+    }
+
+    /// Shown until the CLI lists its own (Antigravity: `agy models`, per account).
+    var presetModels: [String] {
+        switch self {
+        case .claude:
+            ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]
+        case .gemini:
+            ["gemini-2.5-pro", "gemini-2.5-flash"]
+        case .antigravity:
+            ["agy:gemini-4-argon-high", "agy:gemini-4-argon-medium", "agy:gemini-3.8-flash-medium",
+             "agy:claude-opus-5-5-high", "agy:claude-sonnet-5-5-medium"]
+        }
+    }
+
+    static func detect(from model: String) -> AgentProvider {
+        let m = model.trimmed.lowercased()
+        if m.hasPrefix(antigravityPrefix) { return .antigravity }
+        return m.hasPrefix("gemini") ? .gemini : .claude
+    }
+
+    /// The model name the CLI itself takes: "agy:gemini-4-argon-medium" → "gemini-4-argon-medium".
+    static func cliModel(_ model: String) -> String {
+        let m = model.trimmed
+        return m.lowercased().hasPrefix(antigravityPrefix) ? String(m.dropFirst(antigravityPrefix.count)) : m
+    }
+
+    /// The model string stored for this provider: Antigravity models get their prefix.
+    func storedModel(_ name: String) -> String {
+        let bare = Self.cliModel(name)
+        return self == .antigravity ? Self.antigravityPrefix + bare : bare
+    }
+}
 
 enum RunStatus: String, Codable { case running, done, failed, stopped }
 
@@ -116,6 +229,8 @@ struct AgentRun: Codable, Identifiable {
     var cost: Double?
     var error: String?
 
+    var provider: AgentProvider { AgentProvider.detect(from: model) }
+
     mutating func append(log line: String) {
         log.append(line)
         if log.count > 3000 { log.removeFirst(log.count - 3000) }
@@ -150,6 +265,44 @@ struct Feature: Codable, Identifiable {
     var runs: [AgentRun] = []
     var error: String?
     var prURL: String?
+    /// The step before `phase` is done and waits for the developer's approval (nil in files saved before approvals existed).
+    var awaitingApproval: Bool?
+    /// The developer's note, given to the agents of the next step.
+    var userNote: String?
+
+    var isAwaiting: Bool { awaitingApproval == true }
+
+    /// Approves the finished step. Before a fix round, only the findings kept are sent to dev; none kept moves on.
+    mutating func approve(note: String?, keeping kept: [Finding]? = nil) {
+        awaitingApproval = false
+        userNote = note?.nonEmpty?.trimmed
+        guard phase == .fixReview || phase == .fixQA, let kept else { return }
+        pending = kept
+        if kept.isEmpty { phase = phase == .fixReview ? .qa : .ready }
+    }
+
+    /// Moves on without fixing: the findings stay as open points for the pull request.
+    mutating func skipFixes() {
+        awaitingApproval = false
+        unresolved += pending
+        pending = []
+        phase = phase == .fixReview ? .qa : .ready
+    }
+
+    /// Sends the dev agent back to work on the developer's request; review and QA run again after it.
+    mutating func requestChanges(_ note: String) {
+        awaitingApproval = false
+        userNote = note.trimmed
+        pending = []
+        phase = .dev
+    }
+
+    /// Runs the analysis again with the developer's note; the new analysis sees the previous one.
+    mutating func redoAnalysis(_ note: String) {
+        awaitingApproval = false
+        userNote = note.trimmed
+        phase = .analysis
+    }
 
     /// What the agents are asked to build: the user's prompt and the Jira ticket.
     var request: String {

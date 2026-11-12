@@ -33,7 +33,7 @@ struct ToolsView: View {
                             }
                         }
                     }
-                    Section("Skills (\(inventory.skills.filter { !disabledSkills.contains($0) }.count) on)") {
+                    Section("Skills, Claude Code agents only (\(inventory.skills.filter { !disabledSkills.contains($0) }.count) on)") {
                         ForEach(inventory.skills.filter { matches($0) }, id: \.self) { skill in
                             Toggle(skill, isOn: enabled(skill, in: $disabledSkills))
                         }
@@ -42,7 +42,7 @@ struct ToolsView: View {
             } else if let error {
                 ContentUnavailableView("Could not list the tools", systemImage: "exclamationmark.triangle", description: Text(error))
             } else {
-                ProgressView("Asking Claude Code for its MCP servers and skills…").frame(maxHeight: .infinity)
+                ProgressView("Loading MCP servers and skills…").frame(maxHeight: .infinity)
             }
         }
         .frame(width: 520, height: 560)

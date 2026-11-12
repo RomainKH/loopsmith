@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 300" width="1200" height="300" fill="none">
+  <defs>
+    <linearGradient id="bannerBg" x1="0" y1="0" x2="1200" y2="300" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#111215"/>
+      <stop offset="100%" stop-color="#181A1F"/>
+    </linearGradient>
+    <linearGradient id="anvilSteelB" x1="256" y1="210" x2="256" y2="355" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#F2F5F9"/>
+      <stop offset="50%" stop-color="#C2C9D6"/>
+      <stop offset="100%" stop-color="#8A92A1"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1200" height="300" rx="24" fill="url(#bannerBg)" stroke="#FFFFFF" stroke-opacity="0.08" stroke-width="1.5"/>
+
+  <!-- Anvil Mark -->
+  <g transform="translate(64, 38) scale(0.44)">
+    <rect x="32" y="32" width="448" height="448" rx="98" fill="#16181D" stroke="#FFFFFF" stroke-opacity="0.1" stroke-width="3"/>
+    <path d="M155 355 H363 L348 329 Q299 302 308 264 H380 V217 H209 L202 228 L112 232 Q150 269 211 274 Q217 304 170 329 Z"
+          fill="url(#anvilSteelB)"/>
+    <path d="M155 355 H363 L348 329 H170 Z" fill="#000000" fill-opacity="0.14"/>
+    <rect x="334" y="233" width="17" height="12" rx="2.5" fill="#191B20" fill-opacity="0.75"/>
+  </g>
+
+  <!-- Title & Subtitle -->
+  <text x="316" y="132" fill="#F8FAFC" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Display', Inter, sans-serif" font-size="56" font-weight="800" letter-spacing="-1.5">Loopsmith</text>
+  <text x="318" y="176" fill="#94A3B8" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Text', Inter, sans-serif" font-size="21" font-weight="500">
+    Autonomous AI feature forge — from prompt &amp; Jira ticket to verified Pull Request.
+  </text>
+
+  <!-- Subtle Pipeline Pills -->
+  <g transform="translate(318, 204)">
+    <rect x="0" y="0" width="136" height="32" rx="8" fill="#FFFFFF" fill-opacity="0.06" stroke="#FFFFFF" stroke-opacity="0.1"/>
+    <text x="68" y="21" text-anchor="middle" fill="#E2E8F0" font-family="ui-monospace, SFMono-Regular, monospace" font-size="13" font-weight="600">Claude Code</text>
+
+    <rect x="148" y="0" width="132" height="32" rx="8" fill="#FFFFFF" fill-opacity="0.06" stroke="#FFFFFF" stroke-opacity="0.1"/>
+    <text x="214" y="21" text-anchor="middle" fill="#E2E8F0" font-family="ui-monospace, SFMono-Regular, monospace" font-size="13" font-weight="600">Gemini CLI</text>
+
+    <rect x="292" y="0" width="440" height="32" rx="8" fill="#FFFFFF" fill-opacity="0.03" stroke="#FFFFFF" stroke-opacity="0.08"/>
+    <text x="512" y="21" text-anchor="middle" fill="#94A3B8" font-family="ui-monospace, SFMono-Regular, monospace" font-size="13">Analysis  →  Dev  →  2× Review  →  2× QA  →  GitHub PR</text>
+  </g>
+</svg>

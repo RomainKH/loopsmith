@@ -16,27 +16,74 @@ struct JiraWorklog: Identifiable {
     var end: Date { started.addingTimeInterval(TimeInterval(seconds)) }
 }
 
-/// Jira Cloud REST client (email + API token, basic auth).
+/// Jira Cloud REST client (email + API token, basic auth over HTTPS only).
 struct Jira {
     var site: String
     var email: String
     var token: String
 
-    var isConfigured: Bool { !site.trimmed.isEmpty && !email.trimmed.isEmpty && !token.isEmpty }
+    var isConfigured: Bool { validatedBaseURL != nil && !email.trimmed.isEmpty && !token.isEmpty }
 
-    var baseURL: String {
-        var url = site.trimmed
-        if !url.hasPrefix("http") { url = "https://" + url }
-        while url.hasSuffix("/") { url.removeLast() }
+    private static let issueKeyRegex = try! Regex(#"^[A-Z][A-Z0-9_]{0,31}-\d{1,10}$"#)
+
+    /// Strictly validates a Jira issue key (`PROJ-123`) to prevent URL path traversal or parameter injection.
+    static func isValidIssueKey(_ key: String) -> Bool {
+        let trimmed = key.trimmed.uppercased()
+        return trimmed.wholeMatch(of: issueKeyRegex) != nil
+    }
+
+    /// Enforces HTTPS and rejects malformed hosts, credentials in URLs, or private/metadata SSRF hosts.
+    var validatedBaseURL: URL? {
+        var raw = site.trimmed
+        guard !raw.isEmpty else { return nil }
+        if raw.lowercased().hasPrefix("http://") {
+            return nil // Never transmit Basic Auth API tokens over cleartext HTTP
+        }
+        if !raw.lowercased().hasPrefix("https://") {
+            raw = "https://" + raw
+        }
+        while raw.hasSuffix("/") { raw.removeLast() }
+        guard let components = URLComponents(string: raw),
+              components.scheme?.lowercased() == "https",
+              components.user == nil,
+              components.password == nil,
+              components.query == nil,
+              components.fragment == nil,
+              components.path.isEmpty,
+              let host = components.host?.lowercased(),
+              host.contains("."),
+              !Self.isBlockedHost(host),
+              let url = components.url else {
+            return nil
+        }
         return url
     }
 
-    func browseURL(_ key: String) -> URL? { URL(string: "\(baseURL)/browse/\(key)") }
+    private static func isBlockedHost(_ host: String) -> Bool {
+        if host == "localhost" || host.hasSuffix(".local") || host.hasSuffix(".internal") { return true }
+        if host.hasPrefix("127.") || host.hasPrefix("10.") || host.hasPrefix("169.254.") || host.hasPrefix("192.168.") || host == "0.0.0.0" {
+            return true
+        }
+        return false
+    }
+
+    var baseURL: String {
+        validatedBaseURL?.absoluteString ?? ""
+    }
+
+    func browseURL(_ key: String) -> URL? {
+        let cleanKey = key.trimmed.uppercased()
+        guard Self.isValidIssueKey(cleanKey), let base = validatedBaseURL else { return nil }
+        return base.appendingPathComponent("browse").appendingPathComponent(cleanKey)
+    }
 
     private func call(_ path: String, method: String = "GET", body: [String: Any]? = nil) async throws -> Any {
-        guard let url = URL(string: baseURL + path) else { throw AppError("Invalid Jira site: \(site)") }
+        guard let base = validatedBaseURL, let url = URL(string: base.absoluteString + path), url.scheme == "https" else {
+            throw AppError("Invalid or insecure Jira site (HTTPS required): \(site)")
+        }
         var req = URLRequest(url: url)
         req.httpMethod = method
+        req.timeoutInterval = 30
         req.setValue("Basic " + Data("\(email.trimmed):\(token)".utf8).base64EncodedString(), forHTTPHeaderField: "Authorization")
         req.setValue("application/json", forHTTPHeaderField: "Accept")
         if let body {
@@ -61,7 +108,7 @@ struct Jira {
         let obj = try await call("/rest/api/3/search/jql", method: "POST",
                                  body: ["jql": jql, "fields": ["summary", "status"], "maxResults": 100]) as? [String: Any]
         return (obj?["issues"] as? [[String: Any]] ?? []).compactMap { issue in
-            guard let key = issue["key"] as? String else { return nil }
+            guard let key = issue["key"] as? String, Self.isValidIssueKey(key) else { return nil }
             let fields = issue["fields"] as? [String: Any]
             return JiraIssue(key: key,
                              summary: fields?["summary"] as? String ?? "",
@@ -71,11 +118,13 @@ struct Jira {
 
     /// Summary and description of a ticket, as plain text for the agents (API v2 gives the description as text).
     func issueContext(_ key: String) async throws -> String {
-        let obj = try await call("/rest/api/2/issue/\(key)?fields=summary,description") as? [String: Any]
+        let cleanKey = key.trimmed.uppercased()
+        guard Self.isValidIssueKey(cleanKey) else { throw AppError("Invalid Jira issue key: \(key)") }
+        let obj = try await call("/rest/api/2/issue/\(cleanKey)?fields=summary,description") as? [String: Any]
         let fields = obj?["fields"] as? [String: Any]
         let summary = fields?["summary"] as? String ?? ""
         let description = fields?["description"] as? String ?? ""
-        return "\(key): \(summary)\n\n\(description)".trimmed
+        return "\(cleanKey): \(summary)\n\n\(description)".trimmed
     }
 
     /// The token owner's worklogs started on `day` (local time zone).
@@ -86,7 +135,7 @@ struct Jira {
         let dayText = Self.dayFormatter.string(from: start)
         let issues = try await search("worklogDate = \"\(dayText)\" AND worklogAuthor = currentUser()")
         var logs: [JiraWorklog] = []
-        for issue in issues {
+        for issue in issues where Self.isValidIssueKey(issue.key) {
             let after = Int(start.timeIntervalSince1970 * 1000), before = Int(end.timeIntervalSince1970 * 1000)
             let obj = try await call("/rest/api/2/issue/\(issue.key)/worklog?startedAfter=\(after)&startedBefore=\(before)") as? [String: Any]
             for log in obj?["worklogs"] as? [[String: Any]] ?? [] {
@@ -105,7 +154,9 @@ struct Jira {
     }
 
     func addWorklog(issue: String, started: Date, seconds: Int, comment: String) async throws {
-        _ = try await call("/rest/api/2/issue/\(issue)/worklog", method: "POST",
+        let cleanKey = issue.trimmed.uppercased()
+        guard Self.isValidIssueKey(cleanKey) else { throw AppError("Invalid Jira issue key: \(issue)") }
+        _ = try await call("/rest/api/2/issue/\(cleanKey)/worklog", method: "POST",
                            body: ["started": Self.startedFormatter.string(from: started),
                                   "timeSpentSeconds": seconds,
                                   "comment": comment])

@@ -32,6 +32,10 @@ enum Shell {
         }
         let home = NSHomeDirectory()
         env["PATH"] = [path, "\(home)/.local/bin", "/opt/homebrew/bin", "/usr/local/bin"].joined(separator: ":")
+        for key in ["DYLD_INSERT_LIBRARIES", "DYLD_LIBRARY_PATH", "DYLD_FRAMEWORK_PATH", "LD_PRELOAD", "BASH_ENV", "ENV", "PROMPT_COMMAND"] {
+            env.removeValue(forKey: key)
+        }
+        env["GIT_TERMINAL_PROMPT"] = "0"
         return env
     }()
 

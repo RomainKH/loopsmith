@@ -8,6 +8,7 @@ struct LoopsmithApp: App {
     init() {
         // Started with `swift run` (no app bundle), the process would get no Dock icon nor focus.
         NSApplication.shared.setActivationPolicy(.regular)
+        NSApplication.shared.applicationIconImage = Brand.makeAppIcon()
         NSApplication.shared.activate(ignoringOtherApps: true)
     }
 
@@ -15,13 +16,16 @@ struct LoopsmithApp: App {
         WindowGroup("Loopsmith") {
             ContentView()
                 .environment(store)
-                .frame(minWidth: 960, minHeight: 620)
+                .tint(Brand.amber)
+                .frame(minWidth: 1020, minHeight: 660)
                 .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
                     store.stopAll()
                 }
         }
         SwiftUI.Settings {
-            SettingsView().environment(store)
+            SettingsView()
+                .environment(store)
+                .tint(Brand.amber)
         }
     }
 }

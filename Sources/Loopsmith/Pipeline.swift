@@ -13,7 +13,7 @@ enum Pipeline {
 extension AppStore {
     func start(_ id: UUID) {
         guard tasks[id] == nil, let f = feature(id), f.phase != .ready, f.phase != .prOpened else { return }
-        update(id) { $0.running = true; $0.error = nil }
+        update(id) { $0.running = true; $0.error = nil; $0.awaitingApproval = false }
         tasks[id] = Task {
             await runPipeline(id)
             tasks[id] = nil
@@ -40,7 +40,7 @@ extension AppStore {
                 switch f.phase {
                 case .analysis:
                     let analysis = try await runAnalysis(id)
-                    update(id) { $0.analysis = analysis; $0.phase = .dev }
+                    update(id) { $0.analysis = analysis; $0.phase = .dev; $0.userNote = nil }
                     if analysis.isBlocked {
                         update(id) { $0.error = "The analysis says the request is blocked: \(analysis.summary) Continue starts development anyway." }
                         save()
@@ -74,7 +74,13 @@ extension AppStore {
                 case .ready, .prOpened:
                     return
                 }
+                update(id) { $0.userNote = nil }
                 save()
+                if settings.approveEachStep, let next = feature(id)?.phase, next != .ready, next != .prOpened {
+                    update(id) { $0.awaitingApproval = true }
+                    save()
+                    return
+                }
             }
         } catch {
             if !Task.isCancelled { update(id) { $0.error = error.localizedDescription } }
@@ -85,19 +91,22 @@ extension AppStore {
     private func runDev(_ id: UUID, fixing role: Role?) async throws {
         guard let f = feature(id) else { return }
         let prompt: String, lens: String
-        var resume = f.devSessionId
+        let resume = f.devSessionId
+        let note = f.userNote.map { "\n\nThe developer who validates each step adds:\n\($0)" } ?? ""
         if let role {
             let round = (role == .review ? f.reviewFixes : f.qaFixes) + 1
             lens = "Fix · \(role == .review ? "review" : "QA") round \(round)"
             let fix = Agent.fixPrompt(f.pending, from: role)
-            prompt = resume == nil ? "\(f.devRequest)\n\n\(fix)" : fix
+            prompt = (resume == nil ? "\(f.devRequest)\n\n\(fix)" : fix) + note
+        } else if resume != nil, let request = f.userNote {
+            lens = "Changes requested"
+            prompt = "The developer who validates each step asks for changes:\n\(request)\n\nMake them, run the relevant checks, then end with the updated summary of the whole change."
         } else if resume != nil {
             lens = "Implementation (resumed)"
             prompt = "You were interrupted. Check the state of the worktree and finish the task."
         } else {
             lens = "Implementation"
-            prompt = f.devRequest
-            resume = nil
+            prompt = f.devRequest + note
         }
         _ = try await runAgent(id, role: .dev, lens: lens, prompt: prompt, system: Agent.devSystemPrompt(f),
                                model: settings.devModel, resume: resume, schema: nil)
@@ -106,7 +115,12 @@ extension AppStore {
     /// Reads the request against the code before any change: feasibility, approach, problems, acceptance criteria.
     private func runAnalysis(_ id: UUID) async throws -> Analysis {
         guard let f = feature(id) else { throw AppError("Feature not found") }
-        let (runID, result) = try await runAgent(id, role: .analysis, lens: "Feasibility", prompt: "Analyse this request:\n\n\(f.request)",
+        var prompt = "Analyse this request:\n\n\(f.request)"
+        if let note = f.userNote {
+            prompt += "\n\nThe developer rejected the previous analysis with this note:\n\(note)"
+            if let previous = f.analysis { prompt += "\n\nPrevious analysis:\n\(previous.asText)" }
+        }
+        let (runID, result) = try await runAgent(id, role: .analysis, lens: f.userNote == nil ? "Feasibility" : "Feasibility (redone)", prompt: prompt,
                                                  system: Agent.analysisSystemPrompt(f), model: settings.analysisModel,
                                                  resume: nil, schema: Agent.analysisSchema)
         guard let data = result.structured, let analysis = try? JSONDecoder().decode(Analysis.self, from: data) else {
@@ -145,33 +159,46 @@ extension AppStore {
         guard let f = feature(id) else { throw AppError("Feature not found") }
         let run = AgentRun(role: role, lens: lens, model: model)
         update(id) { $0.runs.append(run) }
-        let args = Agent.arguments(model: model, permissionMode: settings.permissionMode,
+        let args = Agent.arguments(model: model, permissionMode: settings.permissionMode(for: model),
                                    systemPrompt: Agent.withBrief(system, brief: project(at: f.repoPath)?.brief),
                                    resume: resume, schema: schema, readOnly: role != .dev,
-                                   disabledMCP: f.disabledMCP, disabledSkills: f.disabledSkills)
+                                   disabledMCP: f.disabledMCP, disabledSkills: f.disabledSkills,
+                                   prompt: prompt, cwd: f.worktreePath)
+        let cliName = AgentProvider.detect(from: model).binary
         var result: AgentResult?
+        var reply = ReplyBuffer()
         do {
-            let exit = try await Shell.stream(args, cwd: f.worktreePath, input: prompt,
+            let exit = try await Shell.stream(args, cwd: f.worktreePath, input: Agent.stdin(model: model, prompt: prompt),
                                               register: { self.processes[id, default: []].append($0) }) { line in
                 for event in Agent.parse(line) {
+                    let continues = reply.take(event)
                     switch event {
                     case .session(let session):
                         self.updateRun(id, run.id) { $0.sessionId = session }
                         if role == .dev { self.update(id) { $0.devSessionId = session } }
+                    case .delta(let piece):
+                        self.updateRun(id, run.id) { $0.log.appendLog(piece, continuing: continues) }
                     case .log(let text):
-                        self.updateRun(id, run.id) { $0.append(log: text) }
+                        self.updateRun(id, run.id) { $0.log.appendLog(text, continuing: false) }
                     case .result(let r):
                         result = r
                     }
                 }
             }
-            guard let done = result, !done.isError else {
-                throw AppError(result?.text.nonEmpty ?? exit.err.nonEmpty?.trimmed ?? "claude stopped with status \(exit.status)")
+            if let refusal = Agent.antigravityRefusal(model: model, stderr: exit.err) { throw AppError(refusal) }
+            if var done = result, !done.isError {
+                if done.text.trimmed.isEmpty, let full = reply.text.nonEmpty {
+                    done.text = full.trimmed
+                }
+                if done.structured == nil, schema != nil {
+                    done.structured = Agent.extractStructuredJSON(from: done.text)
+                }
+                updateRun(id, run.id) { $0.status = .done; $0.summary = done.text; $0.cost = done.cost; $0.endedAt = Date() }
+                if role == .dev, let session = done.sessionId { update(id) { $0.devSessionId = session } }
+                save()
+                return (run.id, done)
             }
-            updateRun(id, run.id) { $0.status = .done; $0.summary = done.text; $0.cost = done.cost; $0.endedAt = Date() }
-            if role == .dev, let session = done.sessionId { update(id) { $0.devSessionId = session } }
-            save()
-            return (run.id, done)
+            throw AppError(result?.text.nonEmpty ?? exit.err.nonEmpty?.trimmed ?? "\(cliName) stopped with status \(exit.status)")
         } catch {
             let stopped = Task.isCancelled
             updateRun(id, run.id) {
@@ -200,25 +227,40 @@ extension AppStore {
 
     private func runScan(_ id: UUID) async {
         guard let p = project(id) else { return }
-        let args = Agent.arguments(model: settings.analysisModel, permissionMode: settings.permissionMode,
+        let request = "Write the brief of this repository."
+        let args = Agent.arguments(model: settings.analysisModel, permissionMode: settings.permissionMode(for: settings.analysisModel),
                                    systemPrompt: Agent.projectBriefSystemPrompt, resume: nil, schema: nil, readOnly: true,
-                                   disabledMCP: p.disabledMCP, disabledSkills: p.disabledSkills)
+                                   disabledMCP: p.disabledMCP, disabledSkills: p.disabledSkills,
+                                   prompt: request, cwd: p.path)
+        let cliName = AgentProvider.detect(from: settings.analysisModel).binary
         var result: AgentResult?
+        var reply = ReplyBuffer()
         do {
-            let exit = try await Shell.stream(args, cwd: p.path, input: "Write the brief of this repository.",
+            let exit = try await Shell.stream(args, cwd: p.path, input: Agent.stdin(model: settings.analysisModel, prompt: request),
                                               register: { self.processes[id, default: []].append($0) }) { line in
                 for event in Agent.parse(line) {
+                    let continues = reply.take(event)
                     switch event {
-                    case .log(let text): self.updateProject(id) { $0.scanLog.append(text) }
+                    case .delta(let piece):
+                        self.updateProject(id) { $0.scanLog.appendLog(piece, continuing: continues) }
+                    case .log(let text):
+                        self.updateProject(id) { $0.scanLog.appendLog(text, continuing: false) }
                     case .result(let r): result = r
                     case .session: break
                     }
                 }
             }
-            guard let done = result, !done.isError, let brief = done.text.nonEmpty else {
-                throw AppError(result?.text.nonEmpty ?? exit.err.nonEmpty?.trimmed ?? "claude stopped with status \(exit.status)")
+            if let refusal = Agent.antigravityRefusal(model: settings.analysisModel, stderr: exit.err) { throw AppError(refusal) }
+            if var done = result, !done.isError {
+                if done.text.trimmed.isEmpty, let full = reply.text.nonEmpty {
+                    done.text = full.trimmed
+                }
+                if let brief = done.text.nonEmpty {
+                    updateProject(id) { $0.brief = brief.trimmed; $0.briefUpdatedAt = Date() }
+                    return
+                }
             }
-            updateProject(id) { $0.brief = brief.trimmed; $0.briefUpdatedAt = Date() }
+            throw AppError(result?.text.nonEmpty ?? exit.err.nonEmpty?.trimmed ?? "\(cliName) stopped with status \(exit.status)")
         } catch {
             if !Task.isCancelled { updateProject(id) { $0.scanError = error.localizedDescription } }
         }

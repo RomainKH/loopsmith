@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="256" y1="32" x2="256" y2="480" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#202125"/>
+      <stop offset="100%" stop-color="#121316"/>
+    </linearGradient>
+    <linearGradient id="anvilSteel" x1="256" y1="210" x2="256" y2="355" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#F2F5F9"/>
+      <stop offset="50%" stop-color="#C2C9D6"/>
+      <stop offset="100%" stop-color="#8A92A1"/>
+    </linearGradient>
+    <filter id="shadow" x="-15%" y="-15%" width="130%" height="140%">
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#000000" flood-opacity="0.5"/>
+    </filter>
+  </defs>
+
+  <!-- Matte Carbon Squircle -->
+  <rect x="32" y="32" width="448" height="448" rx="98" fill="url(#bg)" stroke="#FFFFFF" stroke-opacity="0.08" stroke-width="1.5"/>
+
+  <!-- Sculpted Blacksmith Anvil (No outline) -->
+  <g filter="url(#shadow)">
+    <path d="M155 355 H363 L348 329 Q299 302 308 264 H380 V217 H209 L202 228 L112 232 Q150 269 211 274 Q217 304 170 329 Z"
+          fill="url(#anvilSteel)"/>
+    <path d="M155 355 H363 L348 329 H170 Z" fill="#000000" fill-opacity="0.14"/>
+    <rect x="334" y="233" width="17" height="12" rx="2.5" fill="#191B20" fill-opacity="0.75"/>
+  </g>
+</svg>

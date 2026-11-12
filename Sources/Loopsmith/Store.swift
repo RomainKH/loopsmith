@@ -10,6 +10,11 @@ struct Settings: Codable, Equatable {
     var qaModel = "claude-opus-5-5"
     /// `claude --permission-mode`: auto, acceptEdits or bypassPermissions.
     var permissionMode = "auto"
+    /// The same choice for Antigravity agents: an account may have no auto mode, and headless `agy` refuses
+    /// whatever its rules do not allow.
+    var antigravityPermissionMode = "auto"
+    /// Stop after each step until the developer approves it.
+    var approveEachStep = true
     /// Dev rounds allowed after each review and each QA before the leftovers become open points.
     var maxFixRounds = 2
     /// Untracked files copied from the repository into each new worktree.
@@ -21,6 +26,10 @@ struct Settings: Codable, Equatable {
 
     init() {}
 
+    func permissionMode(for model: String) -> String {
+        AgentProvider.detect(from: model) == .antigravity ? antigravityPermissionMode : permissionMode
+    }
+
     /// Missing keys keep their default, so a settings file from an older version still loads.
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -31,6 +40,8 @@ struct Settings: Codable, Equatable {
         reviewModel = try c.decodeIfPresent(String.self, forKey: .reviewModel) ?? d.reviewModel
         qaModel = try c.decodeIfPresent(String.self, forKey: .qaModel) ?? d.qaModel
         permissionMode = try c.decodeIfPresent(String.self, forKey: .permissionMode) ?? d.permissionMode
+        antigravityPermissionMode = try c.decodeIfPresent(String.self, forKey: .antigravityPermissionMode) ?? d.antigravityPermissionMode
+        approveEachStep = try c.decodeIfPresent(Bool.self, forKey: .approveEachStep) ?? d.approveEachStep
         maxFixRounds = try c.decodeIfPresent(Int.self, forKey: .maxFixRounds) ?? d.maxFixRounds
         copyFiles = try c.decodeIfPresent(String.self, forKey: .copyFiles) ?? d.copyFiles
         jiraSite = try c.decodeIfPresent(String.self, forKey: .jiraSite) ?? d.jiraSite
@@ -62,7 +73,9 @@ final class AppStore {
     var jira: Jira { Jira(site: settings.jiraSite, email: settings.jiraEmail, token: jiraToken) }
 
     init() {
-        try? FileManager.default.createDirectory(at: Self.folder, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(at: Self.folder, withIntermediateDirectories: true,
+                                                 attributes: [.posixPermissions: 0o700])
+        try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: Self.folder.path)
         settings = (try? Data(contentsOf: Self.folder.appendingPathComponent("settings.json")))
             .flatMap { try? JSONDecoder().decode(Settings.self, from: $0) } ?? Settings()
         jiraToken = Keychain.get("jira")
@@ -94,14 +107,46 @@ final class AppStore {
         }
     }
 
+    private static func writeSecure(_ data: Data, to file: URL) {
+        try? data.write(to: file, options: .atomic)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+    }
+
+    /// Blocks path traversal (`..`, absolute paths) and symlinks when copying untracked config files into a worktree.
+    nonisolated static func isSafeCopyFile(_ name: String, repo: String, worktree: String) -> Bool {
+        let trimmed = name.trimmed
+        guard !trimmed.isEmpty,
+              !trimmed.hasPrefix("/"),
+              !trimmed.hasPrefix("~"),
+              !trimmed.contains(".."),
+              trimmed.rangeOfCharacter(from: .controlCharacters) == nil else { return false }
+        let components = (trimmed as NSString).pathComponents
+        guard !components.contains(".."), !components.contains("/") else { return false }
+
+        let repoRoot = URL(fileURLWithPath: repo, isDirectory: true).standardizedFileURL.path
+        let worktreeRoot = URL(fileURLWithPath: worktree, isDirectory: true).standardizedFileURL.path
+        let sourceURL = URL(fileURLWithPath: repoRoot).appendingPathComponent(trimmed).standardizedFileURL
+        let targetURL = URL(fileURLWithPath: worktreeRoot).appendingPathComponent(trimmed).standardizedFileURL
+
+        guard sourceURL.path.hasPrefix(repoRoot + "/"),
+              targetURL.path.hasPrefix(worktreeRoot + "/") else { return false }
+
+        if let attrs = try? FileManager.default.attributesOfItem(atPath: sourceURL.path),
+           let type = attrs[.type] as? FileAttributeType,
+           type == .typeSymbolicLink {
+            return false
+        }
+        return true
+    }
+
     func save() {
-        if let data = try? JSONEncoder().encode(features) { try? data.write(to: featuresFile, options: .atomic) }
-        if let data = try? JSONEncoder().encode(projects) { try? data.write(to: projectsFile, options: .atomic) }
+        if let data = try? JSONEncoder().encode(features) { Self.writeSecure(data, to: featuresFile) }
+        if let data = try? JSONEncoder().encode(projects) { Self.writeSecure(data, to: projectsFile) }
     }
 
     func saveSettings() {
         guard let data = try? JSONEncoder().encode(settings) else { return }
-        try? data.write(to: settingsFile, options: .atomic)
+        Self.writeSecure(data, to: settingsFile)
     }
 
     func feature(_ id: UUID) -> Feature? { features.first { $0.id == id } }
@@ -165,7 +210,9 @@ final class AppStore {
         let path = "\(root)/\(URL(fileURLWithPath: repo).lastPathComponent)/\(slug)"
         let baseCommit = try await Git.addWorktree(repo: repo, base: base, branch: branch, path: path)
         for name in settings.copyFiles.split(separator: ",").map({ String($0).trimmed }) where !name.isEmpty {
-            let source = "\(repo)/\(name)", target = "\(path)/\(name)"
+            guard Self.isSafeCopyFile(name, repo: repo, worktree: path) else { continue }
+            let source = URL(fileURLWithPath: repo).appendingPathComponent(name).standardizedFileURL.path
+            let target = URL(fileURLWithPath: path).appendingPathComponent(name).standardizedFileURL.path
             if FileManager.default.fileExists(atPath: source), !FileManager.default.fileExists(atPath: target) {
                 try? FileManager.default.copyItem(atPath: source, toPath: target)
             }

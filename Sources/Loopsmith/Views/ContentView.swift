@@ -15,30 +15,47 @@ struct ContentView: View {
 
     var body: some View {
         NavigationSplitView {
-            List(selection: $selection) {
-                Section("Work") {
-                    Label("Worklog", systemImage: "clock").tag(SidebarItem.worklog)
-                    Label("Pull requests", systemImage: "arrow.triangle.pull").tag(SidebarItem.pullRequests)
-                }
-                ForEach(store.projects) { project in
-                    Section(project.name) {
-                        HStack {
-                            Label("Project brief", systemImage: "doc.text.magnifyingglass")
-                            if project.scanning { Spacer(); ProgressView().controlSize(.mini) }
-                        }
-                        .tag(SidebarItem.project(project.id))
-                        ForEach(store.features.filter { $0.repoPath == project.path }) { feature in
-                            FeatureRow(feature: feature).tag(SidebarItem.feature(feature.id))
+            VStack(spacing: 0) {
+                SidebarBrandHeader(settings: store.settings)
+                    .padding(.horizontal, 10)
+                    .padding(.top, 8)
+                    .padding(.bottom, 4)
+
+                List(selection: $selection) {
+                    Section("Workspace") {
+                        Label("Worklog", systemImage: "clock")
+                            .tag(SidebarItem.worklog)
+
+                        Label("Pull requests", systemImage: "arrow.triangle.pull")
+                            .tag(SidebarItem.pullRequests)
+                    }
+                    ForEach(store.projects) { project in
+                        Section(project.name) {
+                            HStack(spacing: 6) {
+                                Label("Project brief", systemImage: "doc.text.magnifyingglass")
+                                Spacer()
+                                if project.scanning {
+                                    ProgressView().controlSize(.mini)
+                                } else if project.brief != nil {
+                                    Circle().fill(Brand.emerald.opacity(0.8)).frame(width: 6, height: 6)
+                                        .help("Project brief ready")
+                                }
+                            }
+                            .tag(SidebarItem.project(project.id))
+
+                            ForEach(store.features.filter { $0.repoPath == project.path }) { feature in
+                                FeatureRow(feature: feature).tag(SidebarItem.feature(feature.id))
+                            }
                         }
                     }
-                }
-                if !otherFeatures.isEmpty {
-                    Section("Other projects") {
-                        ForEach(otherFeatures) { FeatureRow(feature: $0).tag(SidebarItem.feature($0.id)) }
+                    if !otherFeatures.isEmpty {
+                        Section("Other projects") {
+                            ForEach(otherFeatures) { FeatureRow(feature: $0).tag(SidebarItem.feature($0.id)) }
+                        }
                     }
                 }
             }
-            .navigationSplitViewColumnWidth(min: 230, ideal: 270)
+            .navigationSplitViewColumnWidth(min: 245, ideal: 280)
             .toolbar {
                 Button(action: addProject) { Label("Add project", systemImage: "folder.badge.plus") }
                     .keyboardShortcut("n", modifiers: [.command, .shift])
@@ -94,20 +111,52 @@ extension AppStore {
 struct FeatureRow: View {
     let feature: Feature
 
+    private var statusColor: Color {
+        if feature.error != nil { return Brand.crimson }
+        if feature.isAwaiting { return Brand.amber }
+        if feature.phase == .ready || feature.phase == .prOpened { return Brand.emerald }
+        if feature.running { return Brand.amber }
+        return .secondary
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(feature.title).lineLimit(1)
-            HStack(spacing: 4) {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+                Text(feature.title)
+                    .font(.callout.weight(.medium))
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                if let lastRun = feature.runs.last {
+                    Image(systemName: lastRun.provider.icon)
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(Brand.providerColor(lastRun.provider))
+                        .help(lastRun.provider.label)
+                }
+            }
+            HStack(spacing: 5) {
                 if feature.running {
                     ProgressView().controlSize(.mini)
                 } else if feature.error != nil {
-                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Brand.crimson)
+                } else if feature.isAwaiting {
+                    Image(systemName: "hand.raised.fill").foregroundStyle(Brand.amber)
+                } else if feature.phase == .ready || feature.phase == .prOpened {
+                    Image(systemName: "checkmark.seal.fill").foregroundStyle(Brand.emerald)
+                } else {
+                    Circle().fill(statusColor.opacity(0.6)).frame(width: 6, height: 6)
                 }
-                Text([feature.jiraKey, feature.phase.label].compactMap { $0 }.joined(separator: " · "))
+                if let key = feature.jiraKey {
+                    Text(key)
+                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(Brand.amber)
+                    Text("·").foregroundStyle(.tertiary)
+                }
+                Text(feature.isAwaiting ? "Your approval" : feature.phase.label)
+                    .lineLimit(1)
             }
             .font(.caption)
             .foregroundStyle(.secondary)
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, 3)
     }
 }

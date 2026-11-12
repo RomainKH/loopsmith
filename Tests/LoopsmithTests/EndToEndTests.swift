@@ -4,6 +4,7 @@ import Testing
 
 /// Runs the real pipeline (claude CLI, Haiku) on a throwaway repository. Opt-in: it costs a few cents and a few minutes.
 /// LOOPSMITH_E2E=1 LOOPSMITH_HOME=$(mktemp -d) swift test --filter EndToEnd
+/// LOOPSMITH_E2E_MODEL picks another model for every agent, e.g. `agy:gemini-3.8-flash-low` to run it on Antigravity.
 @Suite(.enabled(if: ProcessInfo.processInfo.environment["LOOPSMITH_E2E"] == "1"))
 @MainActor struct EndToEndTests {
     @Test(.timeLimit(.minutes(20))) func featureGoesFromPromptToReady() async throws {
@@ -16,13 +17,15 @@ import Testing
         }
 
         let store = AppStore()
+        let model = ProcessInfo.processInfo.environment["LOOPSMITH_E2E_MODEL"] ?? "claude-haiku-5-5"
+        store.settings.antigravityPermissionMode = "bypassPermissions"
         store.settings.worktreesRoot = home + "/worktrees"
-        store.settings.devModel = "claude-haiku-5-5"
-        store.settings.reviewModel = "claude-haiku-5-5"
-        store.settings.qaModel = "claude-haiku-5-5"
+        store.settings.devModel = model
+        store.settings.reviewModel = model
+        store.settings.qaModel = model
         store.settings.maxFixRounds = 1
 
-        store.settings.analysisModel = "claude-haiku-5-5"
+        store.settings.analysisModel = model
 
         let inventory = try await store.inventory(for: repo)
         #expect(!inventory.skills.isEmpty)
@@ -36,8 +39,18 @@ import Testing
 
         let id = try await store.createFeature(title: "Double", prompt: "Add and export a function `double(n)` in math.js that returns n * 2. Keep it in plain JavaScript, no dependency, no test framework.",
                                                repo: repo, base: "main", issue: nil, disabledMCP: inventory.servers.map(\.name), disabledSkills: [])
+        // Driven like a developer: each step stops for approval, approved with a note the next agents get.
+        #expect(store.settings.approveEachStep)
         store.start(id)
-        while store.feature(id)?.running == true { try await Task.sleep(for: .seconds(2)) }
+        var approvals = 0
+        while true {
+            while store.feature(id)?.running == true { try await Task.sleep(for: .seconds(2)) }
+            guard let f = store.feature(id), f.isAwaiting, f.error == nil, approvals < 12 else { break }
+            approvals += 1
+            store.update(id) { $0.approve(note: "Approval \(approvals): keep it minimal.") }
+            store.start(id)
+        }
+        #expect(approvals >= 3)
 
         let f = try #require(store.feature(id))
         #expect(f.error == nil, "\(f.error ?? "")")

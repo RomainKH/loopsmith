@@ -10,8 +10,45 @@ struct AgentResult: Equatable {
 
 enum AgentEvent: Equatable {
     case session(String)
+    case delta(String)
     case log(String)
     case result(AgentResult)
+}
+
+/// Reassembles streamed `.delta` pieces (Gemini CLI, Antigravity CLI) into the latest assistant message without inserting line breaks mid-token.
+struct ReplyBuffer {
+    private(set) var text = ""
+    private var inDelta = false
+
+    mutating func take(_ event: AgentEvent) -> Bool {
+        switch event {
+        case .delta(let piece):
+            let continues = inDelta
+            if !continues { text = "" }
+            text += piece
+            inDelta = true
+            return continues
+        case .log(let line):
+            inDelta = false
+            if !line.hasPrefix("→ ") && !line.hasPrefix("✗ ") {
+                text = line
+            }
+            return false
+        case .session, .result:
+            return false
+        }
+    }
+}
+
+extension Array where Element == String {
+    mutating func appendLog(_ text: String, continuing: Bool) {
+        if continuing, !isEmpty {
+            self[count - 1] += text
+        } else {
+            append(text)
+            if count > 3000 { removeFirst(count - 3000) }
+        }
+    }
 }
 
 /// MCP servers and skills a `claude` session gets in a folder (user, project and plugin ones).
@@ -30,19 +67,93 @@ struct Lens {
     let brief: String
 }
 
-/// Everything that talks to the Claude Code CLI (`claude -p`, stream-json output).
+/// Everything that talks to the AI agent CLIs (`claude -p`, `gemini -p`, `agy --print`; stream-json output).
 enum Agent {
+    private static let identifierRegex = try! Regex(#"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"#)
+
+    /// Rejects CLI flag injection (leading `-`, whitespace, control chars) in model names and session IDs (AML.T0053).
+    static func isValidIdentifier(_ value: String) -> Bool {
+        value.trimmed.wholeMatch(of: identifierRegex) != nil
+    }
+
+    static func sanitizePermissionMode(_ mode: String) -> String {
+        ["auto", "acceptEdits", "bypassPermissions"].contains(mode) ? mode : "auto"
+    }
+
+    /// What the CLI reads on stdin: the prompt, except for Antigravity, which takes it in `--print=`.
+    static func stdin(model: String, prompt: String) -> String {
+        AgentProvider.detect(from: model) == .antigravity ? "" : prompt
+    }
+
+    /// `prompt` is only used by Antigravity (the others read it on stdin), `cwd` only by Gemini CLI (its MCP servers).
     static func arguments(model: String, permissionMode: String, systemPrompt: String, resume: String?,
-                          schema: String?, readOnly: Bool, disabledMCP: [String], disabledSkills: [String]) -> [String] {
-        var args = ["claude", "-p", "--output-format", "stream-json", "--verbose", "--model", model,
-                    "--permission-mode", permissionMode, "--append-system-prompt", systemPrompt]
-        if let resume { args += ["--resume", resume] }
-        if let schema { args += ["--json-schema", schema] }
-        let denied = (readOnly ? ["Edit", "Write", "NotebookEdit"] : [])
-            + disabledMCP.map { "mcp__" + mcpToolPrefix($0) }
-            + disabledSkills.map { "Skill(\($0))" }
-        if !denied.isEmpty { args += ["--disallowedTools", denied.joined(separator: ",")] }
-        return args
+                          schema: String?, readOnly: Bool, disabledMCP: [String], disabledSkills: [String],
+                          prompt: String = "", cwd: String = "") -> [String] {
+        let provider = AgentProvider.detect(from: model)
+        let safeModel = isValidIdentifier(model) ? model.trimmed : provider.defaultModel
+        let safeMode = sanitizePermissionMode(permissionMode)
+        let safeResume = resume.flatMap { isValidIdentifier($0) ? $0.trimmed : nil }
+
+        switch provider {
+        case .claude:
+            var args = ["claude", "-p", "--output-format", "stream-json", "--verbose", "--model", safeModel,
+                        "--permission-mode", safeMode, "--append-system-prompt", systemPrompt]
+            if let safeResume { args += ["--resume", safeResume] }
+            if let schema { args += ["--json-schema", schema] }
+            let denied = (readOnly ? ["Edit", "Write", "NotebookEdit"] : [])
+                + disabledMCP.map { "mcp__" + mcpToolPrefix($0) }
+                + disabledSkills.map { "Skill(\($0))" }
+            if !denied.isEmpty { args += ["--disallowedTools", denied.joined(separator: ",")] }
+            return args
+
+        case .gemini:
+            let approvalMode: String
+            switch safeMode {
+            case "acceptEdits":
+                approvalMode = readOnly ? "plan" : "auto_edit"
+            default:
+                approvalMode = "yolo"
+            }
+            var instruction = systemPrompt
+            if readOnly {
+                instruction += "\n\nIMPORTANT: You are in read-only mode. Do NOT modify, write, or delete any repository files."
+            }
+            if let schema {
+                instruction += "\n\nRespond ONLY with a valid JSON object matching this JSON Schema (no surrounding markdown prose):\n\(schema)"
+            }
+            var args = ["gemini", "-p", instruction, "--output-format", "stream-json", "--model", safeModel,
+                        "--approval-mode", approvalMode, "--skip-trust"]
+            if let safeResume { args += ["--resume", safeResume] }
+            let disabled = Set(disabledMCP)
+            let geminiServers = geminiInventory(cwd: cwd).servers.map(\.name)
+            if geminiServers.contains(where: disabled.contains) {
+                let allowed = geminiServers.filter { !disabled.contains($0) }
+                // An empty list means no filter at all: name a server that does not exist instead.
+                args += ["--allowed-mcp-server-names"] + (allowed.isEmpty ? ["loopsmith-none"] : allowed)
+            }
+            return args
+
+        case .antigravity:
+            var args = ["agy", "--output-format", "stream-json", "--model", AgentProvider.cliModel(safeModel)]
+            if let safeResume { args += ["--conversation", safeResume] }
+            if let schema { args += ["--json-schema", schema] }
+            // Session-only rules (`--settings`, never saved), globs measured on agy 1.5.6: `*` matches across the `/`
+            // of `mcp(server/tool)`, and a deny rule wins over any allow rule.
+            var permissions: [String: [String]] = [:]
+            switch safeMode {
+            case "acceptEdits": args += ["--mode", "accept-edits"]
+            // Allow rules rather than --dangerously-skip-permissions, so the deny rules below still hold.
+            case "bypassPermissions": permissions["allow"] = ["command(*)", "read_file(*)", "mcp(*)"] + (readOnly ? [] : ["write_file(*)"])
+            default: args += ["--mode", "auto"]
+            }
+            let deny = (readOnly ? ["write_file(*)"] : []) + disabledMCP.map { "mcp(\($0)/*)" }
+            if !deny.isEmpty { permissions["deny"] = deny }
+            if !permissions.isEmpty, let data = try? JSONSerialization.data(withJSONObject: ["permissions": permissions], options: .sortedKeys) {
+                args += ["--settings", String(decoding: data, as: UTF8.self)]
+            }
+            args.append("--print=\(systemPrompt)\n\n\(prompt)")
+            return args
+        }
     }
 
     /// Tool name prefix Claude Code gives a server: "claude.ai Atlassian Rovo (2)" → "claude_ai_Atlassian_Rovo_2".
@@ -53,14 +164,37 @@ enum Agent {
         return name.trimmingCharacters(in: CharacterSet(charactersIn: "_"))
     }
 
-    /// Turns one stream-json line into what the app shows and keeps.
+    /// Extracts a JSON object from raw text or a fenced ```json block (used when Gemini CLI returns structured output in text).
+    static func extractStructuredJSON(from text: String) -> Data? {
+        let trimmed = text.trimmed
+        guard !trimmed.isEmpty else { return nil }
+        if let data = trimmed.data(using: .utf8),
+           let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           JSONSerialization.isValidJSONObject(obj) {
+            return try? JSONSerialization.data(withJSONObject: obj)
+        }
+        guard let firstBrace = trimmed.firstIndex(of: "{"),
+              let lastBrace = trimmed.lastIndex(of: "}"),
+              firstBrace <= lastBrace else { return nil }
+        let candidate = String(trimmed[firstBrace...lastBrace])
+        guard let data = candidate.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              JSONSerialization.isValidJSONObject(obj) else { return nil }
+        return try? JSONSerialization.data(withJSONObject: obj)
+    }
+
+    /// Turns one stream-json line (Claude Code or Gemini CLI) into what the app shows and keeps.
     static func parse(_ line: String) -> [AgentEvent] {
         guard let obj = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? [String: Any] else {
             return line.trimmed.isEmpty ? [] : [.log(line)]
         }
+        if let event = obj["event"] as? String { return parseAntigravity(event, obj) }
         switch obj["type"] as? String {
         case "system":
             if obj["subtype"] as? String == "init", let id = obj["session_id"] as? String { return [.session(id)] }
+            return []
+        case "init":
+            if let id = obj["session_id"] as? String { return [.session(id)] }
             return []
         case "assistant":
             let content = (obj["message"] as? [String: Any])?["content"] as? [[String: Any]] ?? []
@@ -74,6 +208,17 @@ enum Agent {
                     return nil
                 }
             }
+        case "message":
+            guard obj["role"] as? String == "assistant",
+                  let content = obj["content"] as? String, !content.isEmpty else { return [] }
+            if obj["delta"] as? Bool == true {
+                return [.delta(content)]
+            }
+            return content.nonEmpty.map { [.log($0.trimmed)] } ?? []
+        case "tool_use":
+            let name = obj["tool_name"] as? String ?? obj["name"] as? String ?? "tool"
+            let detail = toolDetail(obj["parameters"] ?? obj["input"])
+            return [.log("→ \(name) \(detail)".trimmed)]
         case "user":
             let content = (obj["message"] as? [String: Any])?["content"] as? [[String: Any]] ?? []
             return content.compactMap { item in
@@ -83,16 +228,71 @@ enum Agent {
                     ?? ""
                 return .log("✗ \(text.prefix(400))")
             }
+        case "tool_result":
+            let isErr = (obj["status"] as? String == "error") || (obj["is_error"] as? Bool == true)
+            guard isErr else { return [] }
+            let msg = (obj["error"] as? [String: Any])?["message"] as? String
+                ?? (obj["output"] as? String)
+                ?? "Tool error"
+            return [.log("✗ \(msg.prefix(400))")]
+        case "error":
+            guard let msg = (obj["message"] as? String)?.nonEmpty else { return [] }
+            return [.log("✗ \(msg.prefix(400))")]
         case "result":
+            let isError = (obj["is_error"] as? Bool ?? false) || (obj["status"] as? String == "error")
+            let errObjMsg = (obj["error"] as? [String: Any])?["message"] as? String
+            let text = (obj["result"] as? String)
+                ?? (obj["response"] as? String)
+                ?? errObjMsg
+                ?? ""
             var structured: Data?
             if let value = obj["structured_output"], JSONSerialization.isValidJSONObject(value) {
                 structured = try? JSONSerialization.data(withJSONObject: value)
+            } else if !isError, let extracted = extractStructuredJSON(from: text) {
+                structured = extracted
             }
             return [.result(AgentResult(sessionId: obj["session_id"] as? String,
-                                        text: obj["result"] as? String ?? "",
+                                        text: text,
                                         structured: structured,
                                         cost: obj["total_cost_usd"] as? Double,
-                                        isError: obj["is_error"] as? Bool ?? false))]
+                                        isError: isError))]
+        default:
+            return []
+        }
+    }
+
+    /// Antigravity CLI (`agy` 1.5): `event` lines, the answer in `text_delta` pieces, tools as step updates,
+    /// and a `result` holding the whole response and the structured output.
+    private static func parseAntigravity(_ event: String, _ obj: [String: Any]) -> [AgentEvent] {
+        switch event {
+        case "init":
+            return (obj["conversation_id"] as? String)?.nonEmpty.map { [.session($0)] } ?? []
+        case "step_update":
+            guard let step = obj["step_update"] as? [String: Any] else { return [] }
+            let tool = step["tool_name"] as? String ?? "tool"
+            let info = step["tool_info"] as? [String: Any]
+            switch (step["step_type"] as? String, step["state"] as? String) {
+            case ("agent_response", _):
+                guard let piece = step["text_delta"] as? String, !piece.isEmpty else { return [] }
+                return [.delta(piece)]
+            case ("tool", "ACTIVE"):
+                return [.log("→ \(tool) \(toolDetail(info?["parameters"]))".trimmed)]
+            case ("tool", "ERROR"):
+                let why = (info?["output"] as? String)?.nonEmpty ?? "refused or failed"
+                return [.log("✗ \(tool): \(why.prefix(400))")]
+            default:
+                return []
+            }
+        case "result":
+            guard let r = obj["result"] as? [String: Any] else { return [] }
+            let isError = r["status"] as? String != "SUCCESS"
+            var structured: Data?
+            if let value = r["structured_output"], JSONSerialization.isValidJSONObject(value) {
+                structured = try? JSONSerialization.data(withJSONObject: value)
+            }
+            let text = isError ? ((r["error"] as? String)?.nonEmpty ?? "agy failed") : (r["response"] as? String ?? "")
+            return [.result(AgentResult(sessionId: (r["conversation_id"] as? String)?.nonEmpty, text: text,
+                                        structured: structured, cost: nil, isError: isError))]
         default:
             return []
         }
@@ -100,20 +300,39 @@ enum Agent {
 
     private static func toolDetail(_ input: Any?) -> String {
         guard let input = input as? [String: Any] else { return "" }
-        for key in ["command", "file_path", "pattern", "path", "url", "skill", "description"] {
+        if let server = input["ServerName"] as? String, let name = input["ToolName"] as? String { return "\(server)/\(name)" }
+        for key in ["command", "file_path", "pattern", "path", "url", "skill", "description", "query",
+                    "CommandLine", "AbsolutePath", "TargetFile", "Path", "Query", "Url"] {
             if let value = input[key] as? String { return String(value.replacingOccurrences(of: "\n", with: " ").prefix(200)) }
         }
         return ""
     }
 
-    /// Reads the MCP servers and skills of a folder from the `init` event, then stops the session before it asks the model anything.
+    /// Checks whether a provider's CLI (`claude` or `gemini`) is installed and reachable on PATH.
+    static func cliStatus(_ provider: AgentProvider) async -> (installed: Bool, detail: String) {
+        let res = await Shell.run([provider.binary, "--version"])
+        let output = (res.out.nonEmpty ?? res.err.nonEmpty ?? "").trimmed
+        if res.ok, !output.isEmpty {
+            let firstLine = output.components(separatedBy: .newlines).first ?? output
+            return (true, firstLine)
+        }
+        // Fallback: check if binary exists on PATH even if config file warned
+        let which = await Shell.run(["which", provider.binary])
+        if which.ok, let binPath = which.out.nonEmpty?.trimmed {
+            return (true, binPath)
+        }
+        return (false, "Not found on PATH (`\(provider.binary)`)")
+    }
+
+    /// Reads the MCP servers and skills of a folder from Claude Code, Gemini CLI and Antigravity CLI.
+    /// Skills come from Claude Code only: the other CLIs cannot switch one off for a session.
     static func inventory(cwd: String) async throws -> ToolInventory {
         var found: ToolInventory?
         var running: Process?
-        _ = try await Shell.stream(["claude", "-p", "--output-format", "stream-json", "--verbose",
-                                    "--no-session-persistence", "--model", "claude-haiku-5-5"],
-                                   cwd: cwd, input: "ok",
-                                   register: { running = $0 }) { line in
+        _ = try? await Shell.stream(["claude", "-p", "--output-format", "stream-json", "--verbose",
+                                     "--no-session-persistence", "--model", "claude-haiku-5-5"],
+                                    cwd: cwd, input: "ok",
+                                    register: { running = $0 }) { line in
             guard found == nil,
                   let obj = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? [String: Any],
                   obj["subtype"] as? String == "init" else { return }
@@ -124,8 +343,67 @@ enum Agent {
                                   skills: (obj["skills"] as? [String] ?? []).sorted())
             running?.terminate()
         }
-        guard let found else { throw AppError("claude did not list its tools (is Claude Code installed and logged in?)") }
-        return found
+
+        let others = geminiInventory(cwd: cwd).servers + (await antigravityServers(cwd: cwd))
+        guard found != nil || !others.isEmpty else {
+            throw AppError("Could not list tools (make sure Claude Code, Gemini CLI or Antigravity CLI is installed and logged in)")
+        }
+        var base = found ?? ToolInventory(servers: [], skills: [])
+        for server in others where !base.servers.contains(where: { $0.name == server.name }) {
+            base.servers.append(server)
+        }
+        base.servers.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        return base
+    }
+
+    /// Headless agy cannot ask for a permission: it refuses the tool and often ends the turn with no output, while the
+    /// result still says SUCCESS. Such a run did not do its job (a dev "done" with no change, a review with no verdict).
+    static func antigravityRefusal(model: String, stderr: String) -> String? {
+        guard AgentProvider.detect(from: model) == .antigravity,
+              stderr.contains("auto-denied") || stderr.contains("no output produced") else { return nil }
+        let noAuto = stderr.contains("--mode auto is not available") ? " This account has no auto mode." : ""
+        return "Antigravity refused a tool it could not ask you about.\(noAuto) Choose Bypass for Antigravity in Settings → Agents, or add allow rules to agy's settings. agy said: \(stderr.trimmed.prefix(500))"
+    }
+
+    /// `agy mcp list`: a header, then one server per line (NAME TYPE STATUS COMMAND/URL). No model call.
+    static func antigravityServers(cwd: String) async -> [ToolInventory.Server] {
+        let r = await Shell.run(["agy", "mcp", "list"], cwd: cwd)
+        guard r.ok else { return [] }
+        return r.out.split(separator: "\n").compactMap { line in
+            let cols = line.split(whereSeparator: \.isWhitespace)
+            guard cols.count >= 3, cols[0] != "NAME" else { return nil }
+            return ToolInventory.Server(name: String(cols[0]), status: "agy \(cols[2])")
+        }
+    }
+
+    /// The models this Antigravity account offers (`agy models`: "<id>\t<label>" lines), stored with their prefix.
+    static func antigravityModels() async -> [String] {
+        let r = await Shell.run(["agy", "models"])
+        guard r.ok else { return [] }
+        return r.out.split(separator: "\n").compactMap { line in
+            guard line.contains("\t"), let id = line.split(separator: "\t").first, isValidIdentifier(String(id)) else { return nil }
+            return AgentProvider.antigravity.storedModel(String(id))
+        }
+    }
+
+    /// Reads the MCP servers configured in `~/.gemini` and `<cwd>/.gemini` without spawning a paid model call.
+    static func geminiInventory(cwd: String) -> ToolInventory {
+        let home = NSHomeDirectory()
+        let settingsFiles = [
+            "\(home)/.gemini/settings.json",
+            "\(cwd)/.gemini/settings.json"
+        ]
+        var serverNames = Set<String>()
+        for path in settingsFiles {
+            if let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+               let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+               let mcp = json["mcpServers"] as? [String: Any] {
+                serverNames.formUnion(mcp.keys)
+            }
+        }
+        let servers = serverNames.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+            .map { ToolInventory.Server(name: $0, status: "gemini") }
+        return ToolInventory(servers: servers, skills: [])
     }
 
     // MARK: Prompts
@@ -214,6 +492,7 @@ enum Agent {
         if let criteria = f.analysis?.acceptanceCriteria, !criteria.isEmpty {
             prompt += "\n\nAcceptance criteria:\n" + criteria.map { "- \($0)" }.joined(separator: "\n")
         }
+        if let note = f.userNote { prompt += "\n\nNote from the developer who validates each step:\n\(note)" }
         return prompt
     }
 

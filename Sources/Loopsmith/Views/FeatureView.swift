@@ -7,6 +7,7 @@ struct FeatureView: View {
     @State private var showPullRequest = false
     @State private var showLogWork = false
     @State private var showTools = false
+    @State private var showDiff = false
     @State private var confirmRemove = false
     @State private var actionError: String?
 
@@ -20,7 +21,10 @@ struct FeatureView: View {
                         Label(message, systemImage: "exclamationmark.triangle.fill")
                             .foregroundStyle(.orange).textSelection(.enabled)
                     }
-                    if let url = f.prURL.flatMap(URL.init(string:)) {
+                    if !f.running && (f.isAwaiting || f.phase == .ready) {
+                        GatePanel(feature: f, showDiff: { showDiff = true }, createPullRequest: { showPullRequest = true })
+                    }
+                    if let url = f.prURL.flatMap(GitHub.safeHTTPSURL) {
                         Link(destination: url) { Label(url.absoluteString, systemImage: "arrow.triangle.pull") }
                     }
                     if !f.unresolved.isEmpty {
@@ -35,6 +39,7 @@ struct FeatureView: View {
             .navigationTitle(f.title)
             .toolbar { toolbar(f) }
             .sheet(isPresented: $showPullRequest) { PullRequestSheet(feature: f) }
+            .sheet(isPresented: $showDiff) { DiffSheet(feature: f) }
             .sheet(isPresented: $showLogWork) { LogWorkSheet(issueKey: f.jiraKey ?? "", comment: f.title, start: nil) {} }
             .sheet(isPresented: $showTools) {
                 ToolsView(folder: f.worktreePath,
@@ -71,7 +76,7 @@ struct FeatureView: View {
         ToolbarItemGroup {
             if f.running {
                 Button { store.stop(id) } label: { Label("Stop", systemImage: "stop.fill") }
-            } else if f.phase != .ready && f.phase != .prOpened {
+            } else if f.phase != .ready && f.phase != .prOpened && !f.isAwaiting {
                 Button { store.start(id) } label: { Label(f.runs.isEmpty ? "Start" : "Continue", systemImage: "play.fill") }
             }
             Button { showPullRequest = true } label: { Label("Create PR", systemImage: "arrow.triangle.pull") }
@@ -82,6 +87,7 @@ struct FeatureView: View {
                 .disabled(f.running)
                 .help("MCP servers and skills the agents may use")
             Menu {
+                Button("Show diff") { showDiff = true }
                 Button("Open in Finder") { NSWorkspace.shared.open(URL(fileURLWithPath: f.worktreePath)) }
                 Button("Open in VS Code") { open(f.worktreePath, with: "com.microsoft.VSCode") }
                 Button("Open in Terminal") { open(f.worktreePath, with: "com.apple.Terminal") }
@@ -172,10 +178,10 @@ struct RunView: View {
                 }
                 .padding(.top, 6)
             } label: {
-                HStack {
+                HStack(spacing: 8) {
                     Image(systemName: icon).foregroundStyle(color)
                     Text(title).font(.headline)
-                    Text(run.model).font(.caption).foregroundStyle(.secondary)
+                    ProviderBadge(model: run.model, compact: true)
                     Spacer()
                     if run.status == .running { ProgressView().controlSize(.small) }
                     if let cost = run.cost { Text(String(format: "$%.2f", cost)).font(.caption).foregroundStyle(.secondary) }
@@ -300,5 +306,148 @@ struct FindingsList: View {
         case "major": .orange
         default: .secondary
         }
+    }
+}
+
+/// The developer's validation between two steps: approve, with an optional note for the next agents, or send the work back.
+struct GatePanel: View {
+    @Environment(AppStore.self) private var store
+    let feature: Feature
+    let showDiff: () -> Void
+    let createPullRequest: () -> Void
+    @State private var note = ""
+    @State private var dropped: Set<Int> = []
+
+    private var isFix: Bool { feature.phase == .fixReview || feature.phase == .fixQA }
+    private var devRan: Bool { feature.runs.contains { $0.role == .dev && $0.status == .done } }
+
+    var body: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 10) {
+                Label(title, systemImage: "hand.raised.fill").font(.headline)
+                Text(explanation).foregroundStyle(.secondary)
+                if isFix {
+                    ForEach(Array(feature.pending.enumerated()), id: \.offset) { i, finding in
+                        Toggle(isOn: Binding(get: { !dropped.contains(i) }, set: { if $0 { dropped.remove(i) } else { dropped.insert(i) } })) {
+                            FindingsList(findings: [finding])
+                        }
+                    }
+                }
+                TextField(feature.phase == .ready ? "What should the dev agent change?" : "Note for the next step (optional)",
+                          text: $note, axis: .vertical)
+                    .lineLimit(2...6)
+                    .textFieldStyle(.roundedBorder)
+                HStack {
+                    primaryButton
+                    secondaryButton
+                    Spacer()
+                    if devRan { Button("Show diff", action: showDiff) }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(4)
+        }
+        .onChange(of: feature.phase) { note = ""; dropped = [] }
+    }
+
+    @ViewBuilder private var primaryButton: some View {
+        switch feature.phase {
+        case .ready:
+            Button("Create PR…", action: createPullRequest).buttonStyle(.borderedProminent)
+        case .fixReview, .fixQA:
+            let kept = feature.pending.enumerated().filter { !dropped.contains($0.offset) }.map(\.element)
+            Button(kept.isEmpty ? "Drop all and continue" : "Send \(kept.count) to dev") {
+                act { $0.approve(note: note, keeping: kept) }
+            }
+            .buttonStyle(.borderedProminent)
+        default:
+            Button("Approve, start \(feature.phase == .qa ? "QA" : feature.phase.label.lowercased())") { act { $0.approve(note: note) } }
+                .buttonStyle(.borderedProminent)
+        }
+    }
+
+    @ViewBuilder private var secondaryButton: some View {
+        switch feature.phase {
+        case .fixReview, .fixQA:
+            Button(feature.phase == .fixReview ? "Skip fixes, go to QA" : "Skip fixes, ready for PR") { act { $0.skipFixes() } }
+        case .dev where !devRan:
+            Button("Redo analysis") { act { $0.redoAnalysis(note) } }
+                .disabled(note.trimmed.isEmpty)
+                .help("Write in the note what the analysis missed")
+        default:
+            Button("Ask dev for changes") { act { $0.requestChanges(note) } }
+                .disabled(note.trimmed.isEmpty)
+                .help("Write the changes in the note")
+        }
+    }
+
+    private var title: String {
+        switch feature.phase {
+        case .dev: devRan ? "Your approval" : "Analysis done: your call"
+        case .review: "Development done: check the change"
+        case .fixReview: "Review done: \(feature.pending.count) finding(s) for dev"
+        case .qa: feature.qaFixes > 0 ? "QA fixes done: check the change" : "Review passed: check the change"
+        case .fixQA: "QA done: \(feature.pending.count) problem(s) for dev"
+        case .ready: "QA passed: ready for the pull request"
+        default: "Your approval"
+        }
+    }
+
+    private var explanation: String {
+        switch feature.phase {
+        case .dev where !devRan: "Approve to start development: the dev agent gets the analysis and your note. Redo analysis sends your note back to the analyst."
+        case .fixReview, .fixQA: "Untick what is not a real problem. The ticked findings and your note go to the dev agent; skipped ones stay as open points in the PR."
+        case .ready: "Open the pull request, or send the dev agent back with a request: review and QA run again after it."
+        default: "Look at the diff, then approve the next step (your note goes to its agents) or ask the dev agent for changes."
+        }
+    }
+
+    private func act(_ change: (inout Feature) -> Void) {
+        store.update(feature.id, change)
+        store.save()
+        store.start(feature.id)
+    }
+}
+
+/// What the agents changed in the worktree, tracked and new files.
+struct DiffSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let feature: Feature
+    @State private var lines: [String]?
+
+    var body: some View {
+        Group {
+            if let lines {
+                if lines.allSatisfy(\.isEmpty) {
+                    ContentUnavailableView("No change yet", systemImage: "doc")
+                } else {
+                    ScrollView([.vertical, .horizontal]) {
+                        LazyVStack(alignment: .leading, spacing: 0) {
+                            ForEach(lines.indices, id: \.self) { i in
+                                Text(lines[i].isEmpty ? " " : lines[i])
+                                    .font(.caption.monospaced())
+                                    .foregroundStyle(color(lines[i]))
+                                    .fixedSize()
+                            }
+                        }
+                        .textSelection(.enabled)
+                        .padding()
+                    }
+                }
+            } else {
+                ProgressView()
+            }
+        }
+        .frame(width: 900, height: 640)
+        .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+        .task { lines = await Git.diff(worktree: feature.worktreePath, base: feature.baseCommit).components(separatedBy: "\n") }
+    }
+
+    private func color(_ line: String) -> Color {
+        if line.hasPrefix("+++") || line.hasPrefix("---") || line.hasPrefix("diff ") { return .primary }
+        if line.hasPrefix("+") { return .green }
+        if line.hasPrefix("-") { return .red }
+        if line.hasPrefix("@@") { return .blue }
+        return .secondary
     }
 }
