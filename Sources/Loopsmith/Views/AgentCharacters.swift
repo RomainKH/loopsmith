@@ -1,3 +1,4 @@
+#if os(macOS)
 import SwiftUI
 
 extension Brand {
@@ -630,3 +631,5 @@ struct AgentToastOverlay: View {
     }
 }
 
+
+#endif

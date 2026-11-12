@@ -1,3 +1,4 @@
+#if os(macOS)
 import SwiftUI
 
 /// The day's Jira worklogs on this project's tickets, the day's total on every project against the daily target,
@@ -255,3 +256,5 @@ struct LogWorkSheet: View {
         }
     }
 }
+
+#endif

@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 import SwiftUI
 
@@ -760,3 +761,5 @@ struct DiffSheet: View {
         return Brand.steel.opacity(0.65)
     }
 }
+
+#endif

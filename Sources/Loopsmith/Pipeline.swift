@@ -181,12 +181,12 @@ extension AppStore {
                                    systemPrompt: Agent.withBrief(system, brief: project(at: f.repoPath)?.brief),
                                    resume: resume, schema: schema, readOnly: role != .dev,
                                    disabledMCP: f.disabledMCP, disabledSkills: f.disabledSkills,
-                                   prompt: prompt, cwd: f.worktreePath)
+                                   prompt: prompt, cwd: f.worktreePath, withoutMCP: runsWithoutMCP(model: model))
         let cliName = provider.binary
         var result: AgentResult?
         var reply = ReplyBuffer()
         var pendingLogs: [(text: String, continuing: Bool)] = []
-        var lastFlush = CFAbsoluteTimeGetCurrent()
+        var lastFlush = Date.timeIntervalSinceReferenceDate
 
         func flushLogs() {
             guard !pendingLogs.isEmpty else { return }
@@ -197,11 +197,13 @@ extension AppStore {
                     r.recordLog(item.text, continuing: item.continuing)
                 }
             }
-            lastFlush = CFAbsoluteTimeGetCurrent()
+            self.onLog?(id, run.id, batch)
+            lastFlush = Date.timeIntervalSinceReferenceDate
         }
 
         do {
             let exit = try await Shell.stream(args, cwd: f.worktreePath, input: Agent.stdin(model: model, prompt: prompt),
+                                              environment: try agentEnvironment(model: model),
                                               register: { self.processes[id, default: []].append($0) }) { line in
                 for event in Agent.parse(line) {
                     let continues = reply.take(event)
@@ -217,7 +219,7 @@ extension AppStore {
                         result = r
                     }
                 }
-                if CFAbsoluteTimeGetCurrent() - lastFlush >= 0.10 {
+                if Date.timeIntervalSinceReferenceDate - lastFlush >= 0.10 {
                     flushLogs()
                 }
             }
@@ -233,7 +235,8 @@ extension AppStore {
                 updateRun(id, run.id) {
                     $0.status = .done
                     $0.summary = done.text
-                    $0.cost = done.cost
+                    // Claude Code prices a custom API's model as if it were Anthropic's: no cost rather than a wrong one.
+                    $0.cost = provider == .custom ? nil : done.cost
                     $0.tokens = done.tokens
                     $0.endedAt = Date()
                 }
@@ -274,12 +277,12 @@ extension AppStore {
         let args = Agent.arguments(model: settings.analysisModel, permissionMode: settings.permissionMode(for: settings.analysisModel),
                                    systemPrompt: Agent.projectBriefSystemPrompt, resume: nil, schema: nil, readOnly: true,
                                    disabledMCP: p.disabledMCP, disabledSkills: p.disabledSkills,
-                                   prompt: request, cwd: p.path)
+                                   prompt: request, cwd: p.path, withoutMCP: runsWithoutMCP(model: settings.analysisModel))
         let cliName = AgentProvider.detect(from: settings.analysisModel).binary
         var result: AgentResult?
         var reply = ReplyBuffer()
         var pendingScanLogs: [(text: String, continuing: Bool)] = []
-        var lastFlush = CFAbsoluteTimeGetCurrent()
+        var lastFlush = Date.timeIntervalSinceReferenceDate
 
         func flushScanLogs() {
             guard !pendingScanLogs.isEmpty else { return }
@@ -290,11 +293,13 @@ extension AppStore {
                     proj.scanLog.appendLog(item.text, continuing: item.continuing)
                 }
             }
-            lastFlush = CFAbsoluteTimeGetCurrent()
+            self.onLog?(id, nil, batch)
+            lastFlush = Date.timeIntervalSinceReferenceDate
         }
 
         do {
             let exit = try await Shell.stream(args, cwd: p.path, input: Agent.stdin(model: settings.analysisModel, prompt: request),
+                                              environment: try agentEnvironment(model: settings.analysisModel),
                                               register: { self.processes[id, default: []].append($0) }) { line in
                 for event in Agent.parse(line) {
                     let continues = reply.take(event)
@@ -307,7 +312,7 @@ extension AppStore {
                     case .session: break
                     }
                 }
-                if CFAbsoluteTimeGetCurrent() - lastFlush >= 0.10 {
+                if Date.timeIntervalSinceReferenceDate - lastFlush >= 0.10 {
                     flushScanLogs()
                 }
             }

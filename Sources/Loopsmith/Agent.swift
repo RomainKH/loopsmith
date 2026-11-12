@@ -70,7 +70,8 @@ struct Lens {
 
 /// Everything that talks to the AI agent CLIs (`claude -p`, `gemini -p`, `agy --print`; stream-json output).
 enum Agent {
-    private static let identifierRegex = try! Regex(#"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"#)
+    /// `/` is allowed for custom API models (`api:openrouter/moonshotai/kimi-k2`); a leading `-` never is.
+    private static let identifierRegex = try! Regex(#"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$"#)
 
     /// Rejects CLI flag injection (leading `-`, whitespace, control chars) in model names and session IDs (AML.T0053).
     static func isValidIdentifier(_ value: String) -> Bool {
@@ -86,21 +87,34 @@ enum Agent {
         AgentProvider.detect(from: model) == .antigravity ? "" : prompt
     }
 
-    /// `prompt` is only used by Antigravity (the others read it on stdin), `cwd` only by Gemini CLI (its MCP servers).
+    /// `prompt` is only used by Antigravity (the others read it on stdin), `cwd` only by Gemini CLI (its MCP servers),
+    /// `withoutMCP` only by Claude Code.
     static func arguments(model: String, permissionMode: String, systemPrompt: String, resume: String?,
                           schema: String?, readOnly: Bool, disabledMCP: [String], disabledSkills: [String],
-                          prompt: String = "", cwd: String = "") -> [String] {
+                          prompt: String = "", cwd: String = "", withoutMCP: Bool = false) -> [String] {
         let provider = AgentProvider.detect(from: model)
         let safeModel = isValidIdentifier(model) ? model.trimmed : provider.defaultModel
-        let safeMode = sanitizePermissionMode(permissionMode)
+        var safeMode = sanitizePermissionMode(permissionMode)
         let safeResume = resume.flatMap { isValidIdentifier($0) ? $0.trimmed : nil }
 
         switch provider {
-        case .claude:
-            var args = ["claude", "-p", "--output-format", "stream-json", "--verbose", "--model", safeModel,
-                        "--permission-mode", safeMode, "--append-system-prompt", systemPrompt]
+        case .claude, .custom:
+            var system = systemPrompt
+            var cliModel = safeModel
+            if provider == .custom {
+                // Auto mode needs a Claude model for its classifier: without it every command would be refused.
+                if safeMode == "auto" { safeMode = "acceptEdits" }
+                cliModel = AgentProvider.endpointModel(safeModel)?.model ?? safeModel
+                // Plain JSON in the answer rather than --json-schema: the structured output tool or API field it
+                // relies on is not something every model behind a custom API handles.
+                if let schema { system += "\n\n" + jsonAnswerInstruction(schema) }
+            }
+            var args = ["claude", "-p", "--output-format", "stream-json", "--verbose", "--model", cliModel,
+                        "--permission-mode", safeMode, "--append-system-prompt", system]
             if let safeResume { args += ["--resume", safeResume] }
-            if let schema { args += ["--json-schema", schema] }
+            if let schema, provider == .claude { args += ["--json-schema", schema] }
+            // No --mcp-config given: no MCP server at all.
+            if withoutMCP { args.append("--strict-mcp-config") }
             let denied = (readOnly ? ["Edit", "Write", "NotebookEdit"] : [])
                 + disabledMCP.map { "mcp__" + mcpToolPrefix($0) }
                 + disabledSkills.map { "Skill(\($0))" }
@@ -119,9 +133,7 @@ enum Agent {
             if readOnly {
                 instruction += "\n\nIMPORTANT: You are in read-only mode. Do NOT modify, write, or delete any repository files."
             }
-            if let schema {
-                instruction += "\n\nRespond ONLY with a valid JSON object matching this JSON Schema (no surrounding markdown prose):\n\(schema)"
-            }
+            if let schema { instruction += "\n\n" + jsonAnswerInstruction(schema) }
             var args = ["gemini", "-p", instruction, "--output-format", "stream-json", "--model", safeModel,
                         "--approval-mode", approvalMode, "--skip-trust"]
             if let safeResume { args += ["--resume", safeResume] }
@@ -155,6 +167,10 @@ enum Agent {
             args.append("--print=\(systemPrompt)\n\n\(prompt)")
             return args
         }
+    }
+
+    static func jsonAnswerInstruction(_ schema: String) -> String {
+        "Respond ONLY with a valid JSON object matching this JSON Schema (no surrounding markdown prose):\n\(schema)"
     }
 
     /// Tool name prefix Claude Code gives a server: "claude.ai Atlassian Rovo (2)" → "claude_ai_Atlassian_Rovo_2".

@@ -90,13 +90,16 @@ enum Role: String, Codable, CaseIterable {
 
 /// AI CLI connector backing an agent role: `claude -p`, `gemini -p` or the Antigravity CLI `agy --print`.
 /// The model string says which: `gemini-*` runs on Gemini CLI, `agy:<model>` on Antigravity (which also serves
-/// Claude models, hence the prefix), anything else on Claude Code.
+/// Claude models, hence the prefix), `api:<endpoint>/<model>` on Claude Code pointed at a custom API
+/// (a local server such as Ollama, a gateway such as LiteLLM), anything else on Claude Code.
 enum AgentProvider: String, Codable, CaseIterable, Identifiable {
     case claude
     case gemini
     case antigravity
+    case custom
 
     static let antigravityPrefix = "agy:"
+    static let customPrefix = "api:"
 
     var id: String { rawValue }
 
@@ -105,6 +108,7 @@ enum AgentProvider: String, Codable, CaseIterable, Identifiable {
         case .claude: "Claude Code"
         case .gemini: "Gemini CLI"
         case .antigravity: "Antigravity CLI"
+        case .custom: "Custom API"
         }
     }
 
@@ -113,12 +117,14 @@ enum AgentProvider: String, Codable, CaseIterable, Identifiable {
         case .claude: "Claude"
         case .gemini: "Gemini"
         case .antigravity: "Antigravity"
+        case .custom: "Custom API"
         }
     }
 
+    /// The CLI that runs the agent: a custom API runs on Claude Code.
     var binary: String {
         switch self {
-        case .claude: "claude"
+        case .claude, .custom: "claude"
         case .gemini: "gemini"
         case .antigravity: "agy"
         }
@@ -129,6 +135,7 @@ enum AgentProvider: String, Codable, CaseIterable, Identifiable {
         case .claude: "bolt.horizontal.fill"
         case .gemini: "sparkles"
         case .antigravity: "arrow.up.right.circle.fill"
+        case .custom: "server.rack"
         }
     }
 
@@ -137,6 +144,7 @@ enum AgentProvider: String, Codable, CaseIterable, Identifiable {
         case .claude: "claude-opus-5-5"
         case .gemini: "gemini-2.5-pro"
         case .antigravity: "agy:gemini-4-argon-medium"
+        case .custom: "api:ollama/qwen3-coder"
         }
     }
 
@@ -150,25 +158,110 @@ enum AgentProvider: String, Codable, CaseIterable, Identifiable {
         case .antigravity:
             ["agy:gemini-4-argon-high", "agy:gemini-4-argon-medium", "agy:gemini-3.8-flash-medium",
              "agy:claude-opus-5-5-high", "agy:claude-sonnet-5-5-medium"]
+        case .custom:
+            []
         }
     }
 
     static func detect(from model: String) -> AgentProvider {
         let m = model.trimmed.lowercased()
         if m.hasPrefix(antigravityPrefix) { return .antigravity }
+        if m.hasPrefix(customPrefix) { return .custom }
         return m.hasPrefix("gemini") ? .gemini : .claude
     }
 
-    /// The model name the CLI itself takes: "agy:gemini-4-argon-medium" → "gemini-4-argon-medium".
+    /// The model without its provider prefix, as the settings field shows it:
+    /// "agy:gemini-4-argon-medium" → "gemini-4-argon-medium", "api:ollama/qwen3-coder" → "ollama/qwen3-coder".
     static func cliModel(_ model: String) -> String {
         let m = model.trimmed
-        return m.lowercased().hasPrefix(antigravityPrefix) ? String(m.dropFirst(antigravityPrefix.count)) : m
+        for prefix in [antigravityPrefix, customPrefix] where m.lowercased().hasPrefix(prefix) {
+            return String(m.dropFirst(prefix.count))
+        }
+        return m
     }
 
-    /// The model string stored for this provider: Antigravity models get their prefix.
+    /// The model string stored for this provider: Antigravity and custom API models get their prefix.
     func storedModel(_ name: String) -> String {
         let bare = Self.cliModel(name)
-        return self == .antigravity ? Self.antigravityPrefix + bare : bare
+        switch self {
+        case .antigravity: return Self.antigravityPrefix + bare
+        case .custom: return Self.customPrefix + bare
+        default: return bare
+        }
+    }
+
+    /// "api:ollama/qwen3-coder:30b" → ("ollama", "qwen3-coder:30b"); nil for the other providers.
+    static func endpointModel(_ model: String) -> (endpoint: String, model: String)? {
+        guard detect(from: model) == .custom else { return nil }
+        let rest = cliModel(model)
+        guard let slash = rest.firstIndex(of: "/") else { return nil }
+        let name = String(rest[..<slash]), bare = String(rest[rest.index(after: slash)...])
+        return name.isEmpty || bare.isEmpty ? nil : (name, bare)
+    }
+}
+
+/// An API that speaks Anthropic's Messages API (`/v1/messages`) which Claude Code agents run against instead of
+/// Anthropic: a local server (Ollama, LM Studio, llama.cpp, vLLM) or a gateway (LiteLLM, OpenRouter, a company proxy).
+/// Roles use it with the model `api:<name>/<model>`. Its key lives in the keychain, never in the settings file.
+struct ModelEndpoint: Codable, Equatable, Identifiable, Hashable {
+    var id = UUID()
+    /// Lowercase letters, digits and dashes: it is written in the model string.
+    var name: String
+    /// Without `/v1`: Claude Code adds `/v1/messages`.
+    var baseURL: String
+    /// What `GET /v1/models` answered at the last test, for the model menus.
+    var models: [String] = []
+    /// Off by default: the tool definitions of a few MCP servers can take 100k tokens, more than a local model holds.
+    var loadMCPServers = false
+
+    init(name: String, baseURL: String, models: [String] = [], loadMCPServers: Bool = false) {
+        self.name = name
+        self.baseURL = baseURL
+        self.models = models
+        self.loadMCPServers = loadMCPServers
+    }
+
+    /// Missing keys keep their default, so endpoints saved by an older version still load.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        name = try c.decode(String.self, forKey: .name)
+        baseURL = try c.decode(String.self, forKey: .baseURL)
+        models = try c.decodeIfPresent([String].self, forKey: .models) ?? []
+        loadMCPServers = try c.decodeIfPresent(Bool.self, forKey: .loadMCPServers) ?? false
+    }
+
+    var keychainAccount: String { "endpoint.\(name)" }
+
+    static let presets: [(label: String, name: String, url: String)] = [
+        ("Ollama", "ollama", "http://localhost:11434"),
+        ("LM Studio", "lmstudio", "http://localhost:1234"),
+        ("llama.cpp server", "llamacpp", "http://localhost:8080"),
+        ("LiteLLM proxy", "litellm", "http://localhost:4000"),
+        ("OpenRouter", "openrouter", "https://openrouter.ai/api"),
+    ]
+
+    private static let nameRegex = try! Regex(#"^[a-z0-9][a-z0-9-]{0,31}$"#)
+
+    static func isValidName(_ name: String) -> Bool { name.wholeMatch(of: nameRegex) != nil }
+
+    /// http(s) with a host, no credentials, query or fragment; trailing slashes and a final `/v1` are dropped.
+    static func normalizedBaseURL(_ raw: String) -> String? {
+        var text = raw.trimmed
+        while text.hasSuffix("/") { text.removeLast() }
+        if text.lowercased().hasSuffix("/v1") { text.removeLast(3) }
+        guard let c = URLComponents(string: text), let scheme = c.scheme?.lowercased(), ["http", "https"].contains(scheme),
+              let host = c.host, !host.isEmpty, c.user == nil, c.password == nil, c.query == nil, c.fragment == nil
+        else { return nil }
+        return text
+    }
+
+    /// Why the endpoint cannot be saved, or nil.
+    func problem(among others: [ModelEndpoint]) -> String? {
+        if !Self.isValidName(name) { return "Name: lowercase letters, digits and dashes (e.g. ollama)." }
+        if others.contains(where: { $0.id != id && $0.name == name }) { return "Another endpoint is called \(name)." }
+        if Self.normalizedBaseURL(baseURL) == nil { return "Base URL: http(s)://host[:port][/path], without /v1." }
+        return nil
     }
 }
 

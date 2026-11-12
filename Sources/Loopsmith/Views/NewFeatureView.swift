@@ -1,3 +1,4 @@
+#if os(macOS)
 import SwiftUI
 
 /// Starts a feature in the open project: its own worktree and branch, then the pipeline.
@@ -136,3 +137,5 @@ struct NewFeatureView: View {
         }
     }
 }
+
+#endif

@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 import SwiftUI
 
@@ -285,3 +286,5 @@ struct FeatureRow: View {
         .padding(.vertical, 4)
     }
 }
+
+#endif

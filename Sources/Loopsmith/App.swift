@@ -1,7 +1,8 @@
+#if os(macOS)
 import AppKit
 import SwiftUI
 
-@main
+/// The macOS window app. `Entry` starts it when the binary gets no CLI command.
 struct LoopsmithApp: App {
     @State private var store = AppStore()
 
@@ -29,3 +30,5 @@ struct LoopsmithApp: App {
         }
     }
 }
+
+#endif

@@ -24,7 +24,7 @@ enum GitHub {
 
     static func authStatus() async -> String {
         let r = await Shell.run(["gh", "auth", "status"])
-        return (r.out + r.err).trimmed.nonEmpty ?? "gh not found: install it with `brew install gh`"
+        return (r.out + r.err).trimmed.nonEmpty ?? "gh not found: install the GitHub CLI (https://cli.github.com), then run `gh auth login`"
     }
 
     /// The user's pull requests on the repository of `repo` (its GitHub remote), every state, newest first.

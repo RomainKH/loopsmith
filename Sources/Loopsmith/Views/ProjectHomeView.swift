@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 import SwiftUI
 
@@ -419,3 +420,5 @@ struct ProjectHomeView: View {
                 set: { value in store.updateProject(project.id) { $0[keyPath: path] = value }; store.scheduleSave() })
     }
 }
+
+#endif

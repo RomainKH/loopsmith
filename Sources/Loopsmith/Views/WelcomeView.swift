@@ -1,3 +1,4 @@
+#if os(macOS)
 import SwiftUI
 
 /// The window while no project is open. The first time, it goes through the setup: the project folder, the AI
@@ -323,3 +324,5 @@ struct WelcomeView: View {
         store.openProject(chosen)
     }
 }
+
+#endif

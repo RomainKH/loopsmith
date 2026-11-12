@@ -1,3 +1,4 @@
+#if os(macOS)
 import SwiftUI
 
 /// The user's pull requests on the project's repository, open first. A pull request opened from a feature
@@ -165,3 +166,5 @@ struct PullRequestsView: View {
         loading = false
     }
 }
+
+#endif

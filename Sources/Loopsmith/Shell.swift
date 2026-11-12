@@ -15,7 +15,8 @@ enum Shell {
         env.removeValue(forKey: "CLAUDECODE")
         var path = env["PATH"] ?? "/usr/bin:/bin"
         let p = Process()
-        p.executableURL = URL(fileURLWithPath: env["SHELL"] ?? "/bin/zsh")
+        let fallbackShell = FileManager.default.isExecutableFile(atPath: "/bin/zsh") ? "/bin/zsh" : "/bin/sh"
+        p.executableURL = URL(fileURLWithPath: env["SHELL"]?.nonEmpty ?? fallbackShell)
         p.arguments = ["-ilc", "printf '__PATH__%s__PATH__' \"$PATH\""]
         let out = Pipe()
         p.standardOutput = out
@@ -39,11 +40,16 @@ enum Shell {
         return env
     }()
 
-    private static func process(_ args: [String], cwd: String?) -> Process {
+    /// `overrides` sets variables for this command only; an empty value removes the variable.
+    private static func process(_ args: [String], cwd: String?, overrides: [String: String] = [:]) -> Process {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         p.arguments = args
-        p.environment = environment
+        var env = environment
+        for (key, value) in overrides {
+            if value.isEmpty { env.removeValue(forKey: key) } else { env[key] = value }
+        }
+        p.environment = env
         if let cwd { p.currentDirectoryURL = URL(fileURLWithPath: cwd) }
         return p
     }
@@ -113,12 +119,38 @@ enum Shell {
         return r.out.trimmed
     }
 
+    /// The lines a pipe carries until it closes, read on a GCD thread (`FileHandle.bytes` only exists on Apple platforms).
+    private static func lines(of pipe: Pipe) -> AsyncStream<String> {
+        AsyncStream { continuation in
+            DispatchQueue.global().async {
+                let handle = pipe.fileHandleForReading
+                var buffer = Data()
+                func emit(_ bytes: Data) {
+                    var line = bytes
+                    if line.last == 0x0D { line.removeLast() }
+                    continuation.yield(String(decoding: line, as: UTF8.self))
+                }
+                while true {
+                    let chunk = handle.availableData
+                    if chunk.isEmpty { break }
+                    buffer.append(chunk)
+                    while let newline = buffer.firstIndex(of: 0x0A) {
+                        emit(buffer[buffer.startIndex..<newline])
+                        buffer.removeSubrange(buffer.startIndex...newline)
+                    }
+                }
+                if !buffer.isEmpty { emit(buffer) }
+                continuation.finish()
+            }
+        }
+    }
+
     /// Runs a command, writes `input` to its stdin and hands each stdout line to `onLine`.
     /// `register` receives the process as soon as it runs, so it can be stopped.
-    static func stream(_ args: [String], cwd: String, input: String,
+    static func stream(_ args: [String], cwd: String, input: String, environment overrides: [String: String] = [:],
                        register: @MainActor (Process) -> Void,
                        onLine: @MainActor (String) -> Void) async throws -> ShellResult {
-        let p = process(args, cwd: cwd)
+        let p = process(args, cwd: cwd, overrides: overrides)
         let out = Pipe(), err = Pipe(), inp = Pipe()
         p.standardOutput = out
         p.standardError = err
@@ -128,7 +160,7 @@ enum Shell {
         async let errData = readAll(err)
         try? inp.fileHandleForWriting.write(contentsOf: Data(input.utf8))
         try? inp.fileHandleForWriting.close()
-        for try await line in out.fileHandleForReading.bytes.lines {
+        for await line in lines(of: out) {
             await onLine(line)
         }
         let errText = String(decoding: await errData, as: UTF8.self)

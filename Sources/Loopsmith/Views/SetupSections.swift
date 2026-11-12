@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 import SwiftUI
 
@@ -21,6 +22,8 @@ struct AgentsSetupSections: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
+
+        EndpointsSetupSection()
 
         Section("Quick Pipeline Presets") {
             HStack(spacing: 8) {
@@ -50,14 +53,31 @@ struct AgentsSetupSections: View {
                 } label: {
                     Label("Hybrid (Antigravity + Claude)", systemImage: "hammer.fill")
                 }
+
+                if let e = store.settings.endpoints.first(where: { !$0.models.isEmpty }), let m = e.models.first {
+                    Button {
+                        let model = "\(AgentProvider.customPrefix)\(e.name)/\(m)"
+                        store.settings.analysisModel = model
+                        store.settings.devModel = model
+                        store.settings.reviewModel = model
+                        store.settings.qaModel = model
+                    } label: {
+                        Label("All \(e.name)", systemImage: AgentProvider.custom.icon)
+                    }
+                    .help("Every role on \(e.name)/\(m)")
+                }
             }
         }
 
         Section("Role Models") {
-            RoleModelRow(role: .analysis, model: $store.settings.analysisModel, antigravityModels: antigravityModels)
-            RoleModelRow(role: .dev, model: $store.settings.devModel, antigravityModels: antigravityModels)
-            RoleModelRow(role: .review, model: $store.settings.reviewModel, antigravityModels: antigravityModels)
-            RoleModelRow(role: .qa, model: $store.settings.qaModel, antigravityModels: antigravityModels)
+            RoleModelRow(role: .analysis, model: $store.settings.analysisModel, antigravityModels: antigravityModels,
+                         endpoints: store.settings.endpoints)
+            RoleModelRow(role: .dev, model: $store.settings.devModel, antigravityModels: antigravityModels,
+                         endpoints: store.settings.endpoints)
+            RoleModelRow(role: .review, model: $store.settings.reviewModel, antigravityModels: antigravityModels,
+                         endpoints: store.settings.endpoints)
+            RoleModelRow(role: .qa, model: $store.settings.qaModel, antigravityModels: antigravityModels,
+                         endpoints: store.settings.endpoints)
         }
 
         Section("Execution & Approvals") {
@@ -97,6 +117,140 @@ struct AgentsSetupSections: View {
                 store.cliStatuses[.antigravity] = a
                 store.cachedAntigravityModels = m
             }
+        }
+    }
+}
+
+/// APIs that speak Anthropic's Messages API, which Claude Code agents run on instead of Anthropic:
+/// local servers (Ollama, LM Studio, llama.cpp, vLLM) and gateways (LiteLLM, OpenRouter, a company proxy).
+struct EndpointsSetupSection: View {
+    @Environment(AppStore.self) private var store
+    @State private var adding = false
+    @State private var draftName = ""
+    @State private var draftURL = ""
+    @State private var draftKey = ""
+    @State private var draftError: String?
+    @State private var results: [UUID: (ok: Bool, message: String)] = [:]
+    @State private var testing: Set<UUID> = []
+
+    var body: some View {
+        @Bindable var store = store
+        Section {
+            ForEach($store.settings.endpoints) { $e in
+                HStack(spacing: 10) {
+                    Image(systemName: AgentProvider.custom.icon)
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(Brand.providerColor(.custom))
+                        .frame(width: 24, height: 24)
+                        .background(Brand.providerColor(.custom).opacity(0.15), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(e.name).font(.callout.weight(.semibold))
+                        Text(e.baseURL).font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(1)
+                        if let r = results[e.id] {
+                            Label(r.message, systemImage: r.ok ? "checkmark.circle.fill" : "xmark.octagon.fill")
+                                .font(.caption)
+                                .foregroundStyle(r.ok ? Brand.emerald : Brand.crimson)
+                                .textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
+                        } else if !e.models.isEmpty {
+                            Text("\(e.models.count) model(s): \(e.models.prefix(3).joined(separator: ", "))\(e.models.count > 3 ? "…" : "")")
+                                .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        }
+                    }
+                    Spacer()
+                    Toggle("MCP", isOn: $e.loadMCPServers)
+                        .toggleStyle(.switch)
+                        .controlSize(.mini)
+                        .help("Give these agents your MCP servers. Off by default: their tool definitions can take more context than a local model has.")
+                    if testing.contains(e.id) { ProgressView().controlSize(.small) }
+                    Button("Test") { test(e) }
+                        .disabled(testing.contains(e.id))
+                    Button(role: .destructive) { remove(e) } label: { Image(systemName: "trash") }
+                        .buttonStyle(.borderless)
+                        .help("Remove \(e.name) and its key")
+                }
+            }
+
+            if adding {
+                TextField("Name", text: $draftName, prompt: Text("ollama"))
+                TextField("Base URL", text: $draftURL, prompt: Text("http://localhost:11434"))
+                SecureField("API key", text: $draftKey, prompt: Text("empty for a local server"))
+                if let draftError {
+                    Text(draftError).font(.caption).foregroundStyle(Brand.crimson)
+                }
+                HStack {
+                    Button("Save and test", action: saveDraft)
+                        .buttonStyle(.borderedProminent)
+                    Button("Cancel") { adding = false }
+                }
+            } else {
+                Menu {
+                    ForEach(ModelEndpoint.presets, id: \.name) { p in
+                        Button("\(p.label) (\(p.url))") { startDraft(name: p.name, url: p.url) }
+                            .disabled(store.settings.endpoint(named: p.name) != nil)
+                    }
+                    Divider()
+                    Button("Another API…") { startDraft(name: "", url: "") }
+                } label: {
+                    Label("Add a custom API", systemImage: "plus")
+                }
+                .fixedSize()
+            }
+
+            Picker("Permissions on custom APIs", selection: $store.settings.customPermissionMode) {
+                Text("Accept edits (no shell commands)").tag("acceptEdits")
+                Text("Bypass (runs every command)").tag("bypassPermissions")
+            }
+            Text("Agents run on Claude Code pointed at the API, with its tools, MCP servers and skills: pick Custom API for a role, then a model. The API must speak Anthropic's Messages API (Ollama, LM Studio, llama.cpp, vLLM, LiteLLM, OpenRouter do; put LiteLLM in front of an OpenAI-only one). Your Anthropic login and API key are never sent to it. MCP servers are off unless you switch them on: their tools can fill a local model's context. Claude Code's auto mode needs a Claude model, so these agents either cannot run commands (accept edits: QA cannot run the tests) or run every command (bypass). The key stays in the keychain.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        } header: {
+            Text("Custom APIs & Local Models")
+        }
+    }
+
+    private func startDraft(name: String, url: String) {
+        draftName = name
+        draftURL = url
+        draftKey = ""
+        draftError = nil
+        adding = true
+    }
+
+    private func saveDraft() {
+        let e = ModelEndpoint(name: draftName.trimmed.lowercased(),
+                              baseURL: ModelEndpoint.normalizedBaseURL(draftURL) ?? draftURL.trimmed)
+        if let problem = e.problem(among: store.settings.endpoints) {
+            draftError = problem
+            return
+        }
+        Keychain.set(draftKey.trimmed, for: e.keychainAccount)
+        store.settings.endpoints.append(e)
+        adding = false
+        test(e)
+    }
+
+    private func remove(_ e: ModelEndpoint) {
+        Keychain.set("", for: e.keychainAccount)
+        store.settings.endpoints.removeAll { $0.id == e.id }
+        results[e.id] = nil
+    }
+
+    private func test(_ e: ModelEndpoint) {
+        testing.insert(e.id)
+        results[e.id] = nil
+        Task {
+            do {
+                let models = try await Agent.endpointModels(e, key: Keychain.get(e.keychainAccount))
+                if let i = store.settings.endpoints.firstIndex(where: { $0.id == e.id }) {
+                    store.settings.endpoints[i].models = models
+                }
+                results[e.id] = (true, models.isEmpty ? "Reachable, but it lists no model"
+                    : "Reachable · \(models.count) model(s): \(models.prefix(3).joined(separator: ", "))\(models.count > 3 ? "…" : "")")
+            } catch {
+                results[e.id] = (false, error.localizedDescription)
+            }
+            testing.remove(e.id)
         }
     }
 }
@@ -214,6 +368,13 @@ private struct RoleModelRow: View {
     let role: Role
     @Binding var model: String
     let antigravityModels: [String]
+    let endpoints: [ModelEndpoint]
+
+    /// Picking "Custom API" starts from the first model of the first endpoint.
+    private func firstModel(of provider: AgentProvider) -> String {
+        guard provider == .custom, let e = endpoints.first else { return provider.defaultModel }
+        return "\(AgentProvider.customPrefix)\(e.name)/\(e.models.first ?? "model")"
+    }
 
     private var currentProvider: AgentProvider { AgentProvider.detect(from: model) }
 
@@ -224,7 +385,7 @@ private struct RoleModelRow: View {
                     get: { currentProvider },
                     set: { newProvider in
                         if newProvider != currentProvider {
-                            model = newProvider.defaultModel
+                            model = firstModel(of: newProvider)
                         }
                     }
                 )) {
@@ -260,6 +421,14 @@ private struct RoleModelRow: View {
                             Button(m) { model = m }
                         }
                     }
+                    ForEach(endpoints) { e in
+                        Section("Custom API · \(e.name)") {
+                            ForEach(e.models, id: \.self) { m in
+                                Button(m) { model = "\(AgentProvider.customPrefix)\(e.name)/\(m)" }
+                            }
+                            if e.models.isEmpty { Text("Test the endpoint to list its models") }
+                        }
+                    }
                 } label: {
                     Image(systemName: "chevron.up.chevron.down")
                         .font(.caption)
@@ -278,3 +447,5 @@ private struct RoleModelRow: View {
         }
     }
 }
+
+#endif

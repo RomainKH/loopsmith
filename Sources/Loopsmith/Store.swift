@@ -1,7 +1,8 @@
-import AppKit
 import Foundation
 import Observation
+#if canImport(UserNotifications)
 @preconcurrency import UserNotifications
+#endif
 
 struct AgentToast: Identifiable, Equatable {
     var id = UUID()
@@ -25,6 +26,11 @@ struct Settings: Codable, Equatable {
     /// The same choice for Antigravity agents: an account may have no auto mode, and headless `agy` refuses
     /// whatever its rules do not allow.
     var antigravityPermissionMode = "auto"
+    /// Custom APIs run models that have no auto mode (Claude Code's classifier needs a Claude model):
+    /// acceptEdits lets agents edit files but not run commands, bypassPermissions runs every command.
+    var customPermissionMode = "acceptEdits"
+    /// Anthropic-compatible APIs (local servers, gateways) the roles can use with `api:<name>/<model>`.
+    var endpoints: [ModelEndpoint] = []
     /// Stop after each step until the developer approves it.
     var approveEachStep = true
     /// Desktop & in-app visual notifications when agents start, finish, or need approval.
@@ -45,8 +51,14 @@ struct Settings: Codable, Equatable {
     init() {}
 
     func permissionMode(for model: String) -> String {
-        AgentProvider.detect(from: model) == .antigravity ? antigravityPermissionMode : permissionMode
+        switch AgentProvider.detect(from: model) {
+        case .antigravity: antigravityPermissionMode
+        case .custom: customPermissionMode == "bypassPermissions" ? "bypassPermissions" : "acceptEdits"
+        default: permissionMode
+        }
     }
+
+    func endpoint(named name: String) -> ModelEndpoint? { endpoints.first { $0.name == name } }
 
     /// Missing keys keep their default, so a settings file from an older version still loads.
     init(from decoder: Decoder) throws {
@@ -59,6 +71,8 @@ struct Settings: Codable, Equatable {
         qaModel = try c.decodeIfPresent(String.self, forKey: .qaModel) ?? d.qaModel
         permissionMode = try c.decodeIfPresent(String.self, forKey: .permissionMode) ?? d.permissionMode
         antigravityPermissionMode = try c.decodeIfPresent(String.self, forKey: .antigravityPermissionMode) ?? d.antigravityPermissionMode
+        customPermissionMode = try c.decodeIfPresent(String.self, forKey: .customPermissionMode) ?? d.customPermissionMode
+        endpoints = try c.decodeIfPresent([ModelEndpoint].self, forKey: .endpoints) ?? d.endpoints
         approveEachStep = try c.decodeIfPresent(Bool.self, forKey: .approveEachStep) ?? d.approveEachStep
         notificationsEnabled = try c.decodeIfPresent(Bool.self, forKey: .notificationsEnabled) ?? d.notificationsEnabled
         maxFixRounds = try c.decodeIfPresent(Int.self, forKey: .maxFixRounds) ?? d.maxFixRounds
@@ -86,13 +100,18 @@ final class AppStore {
     var cachedAntigravityModels: [String]?
     var activeToast: AgentToast?
 
+    /// The command-line interface prints what the agents write (`owner` is the feature, or the project for its brief;
+    /// `runID` is nil for a brief) and what the app would notify.
+    @ObservationIgnored var onLog: ((_ owner: UUID, _ runID: UUID?, _ lines: [(text: String, continuing: Bool)]) -> Void)?
+    @ObservationIgnored var onNotify: ((AgentToast) -> Void)?
     @ObservationIgnored var tasks: [UUID: Task<Void, Never>] = [:]
     @ObservationIgnored var processes: [UUID: [Process]] = [:]
     @ObservationIgnored private var toastDismissTask: Task<Void, Never>?
     @ObservationIgnored private var debouncedSaveTask: Task<Void, Never>?
 
     /// `LOOPSMITH_HOME` keeps a separate set of features and settings (the end-to-end test uses it).
-    static let folder = ProcessInfo.processInfo.environment["LOOPSMITH_HOME"].map { URL(fileURLWithPath: $0, isDirectory: true) }
+    /// macOS: ~/Library/Application Support/Loopsmith; Linux: ~/.local/share/Loopsmith.
+    nonisolated static let folder = ProcessInfo.processInfo.environment["LOOPSMITH_HOME"].map { URL(fileURLWithPath: $0, isDirectory: true) }
         ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Loopsmith", isDirectory: true)
     private var featuresFile: URL { Self.folder.appendingPathComponent("features.json") }
     private var projectsFile: URL { Self.folder.appendingPathComponent("projects.json") }
@@ -181,6 +200,26 @@ final class AppStore {
             try? await Task.sleep(for: .milliseconds(350))
             if !Task.isCancelled { save() }
         }
+    }
+
+    /// Custom API agents get no MCP server unless their endpoint says so.
+    func runsWithoutMCP(model: String) -> Bool {
+        guard let name = AgentProvider.endpointModel(model)?.endpoint else { return false }
+        return settings.endpoint(named: name)?.loadMCPServers != true
+    }
+
+    /// The variables a run of `model` needs: a custom API's address, key and model; nothing for the other providers.
+    func agentEnvironment(model: String) throws -> [String: String] {
+        guard let (name, _) = AgentProvider.endpointModel(model) else {
+            if AgentProvider.detect(from: model) == .custom {
+                throw AppError("\(model) names no endpoint: write custom API models as api:<endpoint>/<model>.")
+            }
+            return [:]
+        }
+        guard let endpoint = settings.endpoint(named: name) else {
+            throw AppError("No custom API called \(name): add it in Settings → Agents & AI (or `loopsmith endpoint add`).")
+        }
+        return try Agent.environment(model: model, endpoint: endpoint, key: Keychain.get(endpoint.keychainAccount))
     }
 
     func saveSettings() {
@@ -315,9 +354,10 @@ final class AppStore {
     /// Shows an animated in-app toast with the agent character and optionally posts a native macOS notification.
     func notify(role: Role? = nil, provider: AgentProvider? = nil, title: String, subtitle: String,
                 featureID: UUID? = nil, isError: Bool = false, systemNotification: Bool = false) {
-        guard settings.notificationsEnabled else { return }
         let toast = AgentToast(role: role, provider: provider, title: title, subtitle: subtitle,
                                featureID: featureID, isError: isError)
+        onNotify?(toast)
+        guard settings.notificationsEnabled else { return }
         activeToast = toast
         toastDismissTask?.cancel()
         toastDismissTask = Task {
@@ -327,6 +367,7 @@ final class AppStore {
             }
         }
 
+        #if canImport(UserNotifications)
         guard systemNotification,
               ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil,
               Bundle.main.bundleIdentifier != nil else { return }
@@ -341,5 +382,6 @@ final class AppStore {
             let req = UNNotificationRequest(identifier: toastID, content: content, trigger: nil)
             UNUserNotificationCenter.current().add(req)
         }
+        #endif
     }
 }

@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 import SwiftUI
 
@@ -31,6 +32,7 @@ enum Brand {
         case .claude: claude
         case .gemini: gemini
         case .antigravity: cobalt
+        case .custom: emerald
         }
     }
 
@@ -380,3 +382,5 @@ struct ForgeSectionHeader: View {
         }
     }
 }
+
+#endif

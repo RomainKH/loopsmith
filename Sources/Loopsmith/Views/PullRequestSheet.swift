@@ -1,3 +1,4 @@
+#if os(macOS)
 import SwiftUI
 
 /// Last step: commit the worktree, push the branch and open the pull request with `gh`.
@@ -91,3 +92,5 @@ struct PullRequestSheet: View {
         }
     }
 }
+
+#endif

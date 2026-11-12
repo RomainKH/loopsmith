@@ -1,3 +1,4 @@
+#if os(macOS)
 import SwiftUI
 
 /// Chooses the MCP servers and skills the agents may use. Everything the user's Claude Code has is on
@@ -87,3 +88,5 @@ struct ToolsView: View {
         do { inventory = try await store.inventory(for: folder, reload: reload) } catch { self.error = error.localizedDescription }
     }
 }
+
+#endif
